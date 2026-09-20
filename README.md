@@ -28,6 +28,14 @@ Understanding non-trivial codebases by jumping through dozens of open editor tab
 
 ---
 
+## Quick Start
+
+1. **Open any code file** in a supported language (`.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`).
+2. **Click the Code Graph icon** in the **top-right action bar of the file editor** (look for the hierarchy/nodes icon next to the Split Editor button). Hovering over it displays **`Code Graph: Open Graph for Active File`**.
+3. *Alternatively*, press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>) and type **`Code Graph: Open Graph for Active File`**.
+
+---
+
 ## Core Capabilities
 
 ### 1. Interactive Call Hierarchy & Tracing
@@ -58,16 +66,6 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 
 ### 5. Services Architecture Mode
 - Switch between **Detailed Methods Mode** (fine-grained call graph) and **Services Mode** (file- and module-level dependencies with call counts).
-
----
-
-## Getting Started
-
-1. Install the extension in **VS Code** or **Cursor**.
-2. Open any supported file (`.ts`, `.js`, `.py`, `.go`, `.rs`).
-3. Open the graph:
-   - Click the **Code Graph** icon in the editor title bar, or
-   - Open the Command Palette (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>) and run `Code Graph: Open Graph for Active File`.
 
 ---
 
