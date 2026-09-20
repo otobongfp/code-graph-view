@@ -1,0 +1,113 @@
+{
+  "name": "code-graph-view",
+  "displayName": "Code Graph View",
+  "icon": "images/logo.png",
+  "description": "Explore code as an interactive call graph: trace callers and callees, see what a git change affects, and curate compact context for AI assistants.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "keywords": [
+    "call graph",
+    "call hierarchy",
+    "code navigation",
+    "git diff",
+    "impact analysis",
+    "visualization",
+    "ai context",
+    "typescript",
+    "go",
+    "rust",
+    "python"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Runs git in the workspace and reads its history; a repository you don't trust can run programs through its git configuration."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Needs local files and git."
+    }
+  },
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Code Graph View",
+      "properties": {
+        "codeGraphView.maxDepth": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Call hops to fetch upfront, upward (callers) and downward (callees). Lower is faster; clicking a method fetches its full chain on demand."
+        },
+        "codeGraphView.hideTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Leave test files (*.spec.ts, *.test.ts, __tests__) out of the graph unless one is the root."
+        },
+        "codeGraphView.includeConstructors": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include constructors as graph nodes. Off by default because dependency-injection constructors add a lot of noise."
+        },
+        "codeGraphView.redactSecrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Replace credentials (API keys, tokens, private keys, passwords in URLs and quoted secrets) with [REDACTED] in the AI context you copy or send. Leave on unless you have a reason not to."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "codeGraphView.open",
+        "title": "Code Graph: Open Graph for Active File",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "codeGraphView.openDiff",
+        "title": "Code Graph: Show Git Changes"
+      },
+      {
+        "command": "codeGraphView.refresh",
+        "title": "Code Graph: Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "codeGraphView.open",
+          "group": "navigation",
+          "when": "resourceLangId == typescript || resourceLangId == typescriptreact || resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == go || resourceLangId == rust || resourceLangId == python"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "node esbuild.js --production",
+    "test": "npm run typecheck && npm run test:unit && npm run test:integration",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:unit": "node test/runFeatureTests.js",
+    "test:integration": "node test/runIntegrationTests.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "elkjs": "^0.9.3"
+  }
+}
