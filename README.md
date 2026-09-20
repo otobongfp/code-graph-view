@@ -12,6 +12,10 @@
 
 ---
 
+![Code Graph View Interface](images/screenshot.png)
+
+---
+
 ## Overview
 
 Understanding non-trivial codebases by jumping through dozens of open editor tabs and running blind text searches is slow and error-prone. When explaining a bug, refactoring a service, or onboarding onto a new repository, developers need to see **how functions connect and pass data**.
