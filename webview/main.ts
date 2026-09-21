@@ -262,6 +262,10 @@ interface FlowStep {
   character: number;
 }
 let flowTrail: FlowStep[] = [];
+/** Steps peeled off the end of the flow trail by Back, newest last, so Forward can replay them. */
+let flowFwd: FlowStep[] = [];
+/** Steps Back/Forward through the flow trail; false means it had nothing to do and the root history should move instead. */
+let flowNav: ((dir: -1 | 1) => boolean) | null = null;
 let renderSeq = 0;
 let currentData: GraphData | null = null;
 /** The method whose call chain is being explored, and how many hops of it to show. */
@@ -331,7 +335,17 @@ let sigLast: { file: string; line: number; character: number; name: string } | n
 let sigCur: SignatureData | null = null;
 let revealNext = false;
 let currentRootKey = '';
-const layoutMemory = new Map<string, { map: MapState; view: { tx: number; ty: number; k: number } }>();
+const layoutMemory = new Map<
+  string,
+  {
+    map: MapState;
+    view: { tx: number; ty: number; k: number };
+    flow: FlowStep[];
+    flowFwd: FlowStep[];
+    expanded: Set<string>;
+    depth: number;
+  }
+>();
 
 function colLeft(state: MapState, c: number): number {
   let x = 0;
@@ -556,32 +570,33 @@ function crumbLabel(label: string): string {
   return method ? `${base} · ${method}` : base;
 }
 
-/** Clickable trail of every root visited and intra-graph execution steps; current is highlighted. */
+const CRUMB_WINDOW = 6;
+
+/** Clickable trail of the roots visited (windowed around the current one), with this root's execution steps after it. */
 function crumbsHtml(fallback: string): string {
-  if (flowTrail.length > 1) {
-    const rootCrumb = trail.length > 0 ? trail[cursor] ?? fallback : fallback;
-    const parts: string[] = [
-      `<span class="crumb root-crumb" data-i="${cursor}" title="${escapeAttr(rootCrumb)}">${escapeXml(crumbLabel(rootCrumb))}</span>`,
-    ];
-    flowTrail.forEach((step) => {
-      parts.push('<span class="crumb-sep">›</span>');
-      const isCur = step.symId === activeId;
-      parts.push(
-        `<span class="crumb flow-crumb${isCur ? ' cur' : ''}" data-sym="${escapeAttr(step.symId)}" title="${escapeAttr(step.file)}:${step.line + 1}">${escapeXml(step.name)}</span>`
-      );
-    });
-    return parts.join('');
-  }
   if (trail.length === 0) return `<span class="crumb cur">${escapeXml(crumbLabel(fallback))}</span>`;
-  const first = Math.max(0, trail.length - 6);
+  const inFlow = flowTrail.length > 1;
+  const first = Math.min(Math.max(0, cursor - 3), Math.max(0, trail.length - CRUMB_WINDOW));
+  const last = Math.min(trail.length, first + CRUMB_WINDOW);
   const parts: string[] = first > 0 ? ['<span class="crumb-more">…</span>'] : [];
-  trail.slice(first).forEach((label, k) => {
-    const i = first + k;
-    if (k > 0 || first > 0) parts.push('<span class="crumb-sep">→</span>');
-    parts.push(
-      `<span class="crumb${i === cursor ? ' cur' : ''}" data-i="${i}" title="${escapeAttr(label)}">${escapeXml(crumbLabel(label))}</span>`
-    );
-  });
+  for (let i = first; i < last; i++) {
+    const label = trail[i];
+    if (i > first || first > 0) parts.push('<span class="crumb-sep">→</span>');
+    const isRoot = i === cursor;
+    const cls = isRoot ? (inFlow ? ' root-crumb' : ' cur') : '';
+    const tip = isRoot && inFlow ? `${label}: click to clear the steps and return to it` : label;
+    parts.push(`<span class="crumb${cls}" data-i="${i}" title="${escapeAttr(tip)}">${escapeXml(crumbLabel(label))}</span>`);
+    if (isRoot && inFlow) {
+      flowTrail.forEach((step) => {
+        parts.push('<span class="crumb-sep">›</span>');
+        const isCur = step.symId === activeId;
+        parts.push(
+          `<span class="crumb flow-crumb${isCur ? ' cur' : ''}" data-sym="${escapeAttr(step.symId)}" title="${escapeAttr(step.file)}:${step.line + 1}">${escapeXml(step.name)}</span>`
+        );
+      });
+    }
+  }
+  if (last < trail.length) parts.push('<span class="crumb-more">…</span>');
   return parts.join('');
 }
 
@@ -1784,21 +1799,26 @@ async function renderGraph(data: GraphData) {
     const item = entry && data.diff ? data.diff.other[Number(entry.getAttribute('data-i'))] : undefined;
     if (item) open(item.file, item.line, 0);
   });
-  main.querySelector('#back')!.addEventListener('click', () => vscode.postMessage({ command: 'back' }));
-  main.querySelector('#fwd')!.addEventListener('click', () => vscode.postMessage({ command: 'forward' }));
+  main.querySelector('#back')!.addEventListener('click', () => {
+    if (!flowNav?.(-1)) vscode.postMessage({ command: 'back' });
+  });
+  main.querySelector('#fwd')!.addEventListener('click', () => {
+    if (!flowNav?.(1)) vscode.postMessage({ command: 'forward' });
+  });
   main.querySelector('#crumbs')!.addEventListener('click', (ev) => {
     const crumb = (ev.target as Element).closest('.crumb');
     if (!crumb) return;
     const sym = crumb.getAttribute('data-sym');
     if (sym) {
-      const info = symInfoAll.get(sym);
-      if (info) {
-        beginPin(sym);
-        open(info.file.file, info.row.line, info.row.character);
-        showSignature(info.file.file, info.row.line, info.row.character, info.row.name);
-        recordFlowStep(sym);
-        locateActive();
-      }
+      activateStep(sym);
+      return;
+    }
+    if (crumb.classList.contains('root-crumb')) {
+      flowTrail = [];
+      flowFwd = [];
+      clearSelection();
+      crumbsEl.innerHTML = crumbsHtml(data.rootLabel);
+      syncNavButtons();
       return;
     }
     if (!crumb.classList.contains('cur')) {
@@ -1894,13 +1914,24 @@ async function renderGraph(data: GraphData) {
     drag = null;
   };
 
+  const syncNavButtons = () => {
+    const back = main.querySelector<HTMLButtonElement>('#back');
+    const fwd = main.querySelector<HTMLButtonElement>('#fwd');
+    if (back) back.disabled = !(flowTrail.length > 1 || cursor > 0);
+    if (fwd) fwd.disabled = !(flowFwd.length > 0 || cursor < trail.length - 1);
+  };
+
   const recordFlowStep = (id: string) => {
     const info = symInfoAll.get(id);
     if (!info) return;
     const existingIdx = flowTrail.findIndex((s) => s.symId === id);
     if (existingIdx >= 0) {
+      // Jumping back to an earlier step keeps the later ones reachable through Forward.
+      const removed = flowTrail.slice(existingIdx + 1);
+      if (removed.length) flowFwd = removed.reverse();
       flowTrail = flowTrail.slice(0, existingIdx + 1);
     } else {
+      flowFwd = [];
       if (flowTrail.length > 7) flowTrail.shift();
       flowTrail.push({
         symId: id,
@@ -1911,7 +1942,34 @@ async function renderGraph(data: GraphData) {
       });
     }
     crumbsEl.innerHTML = crumbsHtml(data.rootLabel);
+    syncNavButtons();
   };
+
+  const activateStep = (id: string) => {
+    const info = symInfoAll.get(id);
+    if (!info) return;
+    beginPin(id);
+    open(info.file.file, info.row.line, info.row.character);
+    showSignature(info.file.file, info.row.line, info.row.character, info.row.name);
+    recordFlowStep(id);
+    locateActive();
+  };
+
+  flowNav = (dir) => {
+    if (dir < 0) {
+      if (flowTrail.length < 2) return false;
+      activateStep(flowTrail[flowTrail.length - 2].symId);
+      return true;
+    }
+    const next = flowFwd[flowFwd.length - 1];
+    if (!next || !symInfoAll.has(next.symId)) return false;
+    const rest = flowFwd.slice(0, -1);
+    activateStep(next.symId);
+    flowFwd = rest;
+    syncNavButtons();
+    return true;
+  };
+  syncNavButtons();
 
   const stepTarget = (symId: string, parentId?: string) => {
     const info = symInfoAll.get(symId);
@@ -2154,7 +2212,9 @@ window.addEventListener('message', (event: MessageEvent<ExtensionToWebviewMessag
       void renderGraph(message.data);
       return;
     }
+    const leaving = { flow: flowTrail, flowFwd, expanded, depth };
     flowTrail = [];
+    flowFwd = [];
     partialSeen = message.partial === true;
     activeId = null;
     revealNext = false;
@@ -2174,12 +2234,16 @@ window.addEventListener('message', (event: MessageEvent<ExtensionToWebviewMessag
     exploreDone.clear();
     exploreTruncated.clear();
     const key = `${message.data.rootFileId}#${message.data.rootSymbolId ?? ''}`;
-    if (currentRootKey) layoutMemory.set(currentRootKey, { map: mapState, view: { ...view } });
+    if (currentRootKey) layoutMemory.set(currentRootKey, { map: mapState, view: { ...view }, ...leaving });
     const remembered = layoutMemory.get(key);
     if (remembered) {
       mapState = remembered.map;
       view = { ...remembered.view };
       refit = false;
+      flowTrail = remembered.flow;
+      flowFwd = remembered.flowFwd;
+      expanded = new Set([...remembered.expanded, ...message.data.roots]);
+      depth = Math.min(remembered.depth, message.data.maxDepth);
     } else {
       mapState = newMapState();
       refit = true;
@@ -2686,7 +2750,9 @@ document.addEventListener('keydown', (ev) => {
   const tag = (ev.target as HTMLElement | null)?.tagName;
   if (ev.altKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') && tag !== 'INPUT' && tag !== 'SELECT') {
     ev.preventDefault();
-    vscode.postMessage({ command: ev.key === 'ArrowLeft' ? 'back' : 'forward' });
+    if (!flowNav?.(ev.key === 'ArrowLeft' ? -1 : 1)) {
+      vscode.postMessage({ command: ev.key === 'ArrowLeft' ? 'back' : 'forward' });
+    }
     return;
   }
   if (ev.altKey && (ev.key === 's' || ev.key === 'S') && tag !== 'INPUT' && tag !== 'SELECT') {

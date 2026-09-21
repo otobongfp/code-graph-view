@@ -2,7 +2,18 @@
 
 All notable changes to Code Graph View are recorded here.
 
-## [Unreleased]
+## [0.0.2]
+
+### Fixed
+- Breadcrumbs and Back/Forward (including Alt+←/→) now step through the methods you click before moving between roots, and Forward replays them.
+- Clicking the current root's crumb clears the clicked-method steps instead of doing nothing.
+- Earlier roots stay visible beside the method steps, and the crumb window follows your position instead of always showing the last few.
+- Returning to a root restores its method steps, expanded cards and depth, along with its pan and zoom.
+
+### Documentation
+- README shows how to open the extension from the activity bar.
+
+## [0.0.1]
 
 ### Added
 - Interactive call graph: files as cards, methods as rows, calls as lines, built from the language server's call hierarchy (TypeScript/JavaScript, Go, Rust, Python).

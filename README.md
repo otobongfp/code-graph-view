@@ -12,6 +12,8 @@
 
 ---
 
+![Click the Code Graph View icon in the activity bar to get started](images/get-started.png)
+
 ![Code Graph View Interface](images/screenshot.png)
 
 ---

@@ -19,6 +19,41 @@ const setSelect = (view, id, value) => {
 
 module.exports = [
   [
+    'breadcrumbs: Back steps through clicked methods first, Forward replays them, the root crumb clears them',
+    async () => {
+      const view = await loaded(h.sampleGraph(), { trail: ['a.ts', 'b.ts', 'c.ts'], cursor: 1 });
+      const crumbs = () => view.$$('#crumbs .crumb').map((c) => c.textContent).join('|');
+      assert.strictEqual(crumbs(), 'a.ts|b.ts|c.ts', 'roots after the current one stay visible');
+
+      view.click(rowOf(view, 'a1').querySelector('.rowbg'));
+      await view.wait(300);
+      view.click(rowOf(view, 'a2').querySelector('.rowbg'));
+      await view.wait(300);
+      assert.strictEqual(crumbs(), 'a.ts|b.ts|sendEmail|saveUser|c.ts', 'clicked methods hang off the current root');
+
+      view.click(view.$('#back'));
+      await view.wait(300);
+      assert.strictEqual(crumbs(), 'a.ts|b.ts|c.ts', 'Back undid the last method, not the whole root');
+      assert.strictEqual(view.lastPosted('back'), undefined);
+      assert.strictEqual(view.$('#fwd').disabled, false);
+
+      view.click(view.$('#fwd'));
+      await view.wait(300);
+      assert.strictEqual(crumbs(), 'a.ts|b.ts|sendEmail|saveUser|c.ts', 'Forward replays it');
+      assert.strictEqual(view.lastPosted('forward'), undefined);
+
+      view.click(view.$$('#crumbs .crumb').find((c) => c.textContent === 'b.ts'));
+      await view.wait(300);
+      assert.strictEqual(crumbs(), 'a.ts|b.ts|c.ts', 'the root crumb clears the steps');
+      assert.deepStrictEqual(activeRows(view), []);
+      assert.strictEqual(view.lastPosted('goTo'), undefined, 'and stays on the same graph');
+
+      view.click(view.$('#back'));
+      assert.ok(view.lastPosted('back'), 'with no steps left, Back moves through the roots');
+      assert.deepStrictEqual(view.errors, []);
+    },
+  ],
+  [
     'progressive loading: methods appear first, relations stream in, and the final graph is complete',
     async () => {
       const view = h.createWebview();
