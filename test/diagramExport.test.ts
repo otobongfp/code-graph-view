@@ -40,21 +40,23 @@ describe('Feature: Diagram Export Engine', () => {
     it('generates structured flowchart with subgraphs for methods mode', () => {
       const mermaid = generateMermaid(sampleGraph, 'methods');
 
-      assert.match(mermaid, /^flowchart LR/);
-      assert.match(mermaid, /subgraph sub_0_authService_ts\["authService\.ts"\]/);
-      assert.match(mermaid, /subgraph sub_1_userRepo_ts\["userRepo\.ts"\]/);
-      assert.match(mermaid, /m_src_authService_ts_login\["login&#40;credentials: AuthDto&#41;: Promise&#60;Token&#62;"\]/);
-      assert.match(mermaid, /m_src_authService_ts_login --> m_src_userRepo_ts_findUser/);
-      assert.match(mermaid, /m_src_authService_ts_login --> m_src_authService_ts_validate/);
+      assert.match(mermaid, /^flowchart TD/);
+      assert.match(mermaid, /subgraph sub_0\["authService\.ts"\]/);
+      assert.match(mermaid, /subgraph sub_1\["userRepo\.ts"\]/);
+      assert.match(mermaid, /n0\["login\(credentials: AuthDto\): Promise<Token>"\]/);
+      assert.match(mermaid, /n0 --> n2/);
+      assert.match(mermaid, /n0 --> n1/);
+      assert.match(mermaid, /style n0 fill:#d18616/);
     });
 
     it('generates file-level flowchart with call count edge labels for services mode', () => {
       const mermaid = generateMermaid(sampleGraph, 'services');
 
-      assert.match(mermaid, /^flowchart LR/);
-      assert.match(mermaid, /file_0_authService_ts\["authService\.ts"\]/);
-      assert.match(mermaid, /file_1_userRepo_ts\["userRepo\.ts"\]/);
-      assert.match(mermaid, /file_0_authService_ts -->\|"1 call"\| file_1_userRepo_ts/);
+      assert.match(mermaid, /^flowchart TD/);
+      assert.match(mermaid, /f0\["authService\.ts"\]/);
+      assert.match(mermaid, /f1\["userRepo\.ts"\]/);
+      assert.match(mermaid, /f0 -->\|"1 call"\| f1/);
+      assert.match(mermaid, /style f0 fill:#d18616/);
     });
 
     it('properly sanitizes special characters, quotes, and punctuation in labels and IDs', () => {
@@ -80,8 +82,7 @@ describe('Feature: Diagram Export Engine', () => {
       };
 
       const mermaid = generateMermaid(complexGraph, 'methods');
-      assert.match(mermaid, /m_pkg_foo_bar_baz_go_DoWork_T_/);
-      assert.match(mermaid, /DoWork&#91;T any&#93;&#40;ctx &quot;context\.Context&quot;&#41;/);
+      assert.match(mermaid, /n0\["DoWork\[T any\]\(ctx 'context\.Context'\)"\]/);
     });
   });
 

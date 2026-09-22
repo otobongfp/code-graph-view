@@ -2,6 +2,13 @@
 
 All notable changes to Code Graph View are recorded here.
 
+## [0.1.1]
+
+### Fixed
+- Fixed SVG standalone export framing and viewBox alignment by normalizing runtime pan/zoom canvas transforms.
+- Fixed PNG image export and clipboard copy by adding image permissions (`data:`, `blob:`) to the webview Content Security Policy.
+- Improved Mermaid flowchart generator with clean `flowchart TD` hierarchy, concise node IDs, proper label escaping, and gold root-method highlighting.
+
 ## [0.1.0]
 
 ### Added

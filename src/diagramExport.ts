@@ -1,29 +1,26 @@
-import { CallEdge, FileNode, GraphData, SymbolRow } from './types';
-
-function sanitizeMermaidId(id: string): string {
-  const clean = id.replace(/[^a-zA-Z0-9_]/g, '_');
-  return clean.match(/^[a-zA-Z]/) ? clean : `n_${clean}`;
-}
+import { GraphData } from './types';
 
 function escapeMermaidLabel(text: string): string {
-  return text
-    .replace(/"/g, '&quot;')
-    .replace(/[[\]{}()<>]/g, (m) => `&#${m.charCodeAt(0)};`);
+  let clean = text.replace(/"/g, "'").replace(/[\\`]/g, '').trim();
+  if (!clean.includes('(') && !clean.includes('[')) {
+    clean += '()';
+  }
+  return clean;
 }
 
 /**
  * Generates clean, GitHub-flavored Mermaid flowchart markup from graph data.
  */
 export function generateMermaid(data: GraphData, mode: 'methods' | 'services' = 'methods'): string {
-  const lines: string[] = ['flowchart LR'];
+  const lines: string[] = ['flowchart TD'];
 
   if (mode === 'services') {
     // Services Mode: File/module level nodes and inter-file call aggregates
     const fileIdMap = new Map<string, string>();
     data.files.forEach((f, idx) => {
-      const sanitized = `file_${idx}_${sanitizeMermaidId(f.label)}`;
+      const sanitized = `f${idx}`;
       fileIdMap.set(f.file, sanitized);
-      const label = escapeMermaidLabel(f.label);
+      const label = f.label.replace(/"/g, "'").trim();
       lines.push(`  ${sanitized}["${label}"]`);
     });
 
@@ -48,23 +45,35 @@ export function generateMermaid(data: GraphData, mode: 'methods' | 'services' = 
       }
     }
 
+    // Highlight root file
+    const rootFileId = fileIdMap.get(data.rootFile);
+    if (rootFileId) {
+      lines.push(`  style ${rootFileId} fill:#d18616,stroke:#e2c541,stroke-width:2px,color:#fff`);
+    }
+
     return lines.join('\n');
   }
 
   // Detailed Methods Mode: Subgraphs for files, nodes for callable methods/functions
   const symIdMap = new Map<string, string>();
+  const rootSymIds: string[] = [];
+  let nodeCount = 0;
 
   data.files.forEach((f, fIdx) => {
-    const subId = `sub_${fIdx}_${sanitizeMermaidId(f.label)}`;
-    const fileLabel = escapeMermaidLabel(f.label);
+    const subId = `sub_${fIdx}`;
+    const fileLabel = f.label.replace(/"/g, "'").trim();
     lines.push(`  subgraph ${subId}["${fileLabel}"]`);
     lines.push('    direction TB');
 
     for (const sym of f.symbols) {
-      const sId = `m_${sanitizeMermaidId(sym.id)}`;
+      const sId = `n${nodeCount++}`;
       symIdMap.set(sym.id, sId);
       const name = escapeMermaidLabel(sym.name);
       lines.push(`    ${sId}["${name}"]`);
+
+      if (data.roots?.includes(sym.id) || sym.id === data.rootSymbolId) {
+        rootSymIds.push(sId);
+      }
     }
 
     lines.push('  end');
@@ -84,6 +93,11 @@ export function generateMermaid(data: GraphData, mode: 'methods' | 'services' = 
     }
   }
 
+  // Highlight root methods
+  for (const rootId of rootSymIds) {
+    lines.push(`  style ${rootId} fill:#d18616,stroke:#e2c541,stroke-width:2px,color:#fff`);
+  }
+
   return lines.join('\n');
 }
 
@@ -97,7 +111,7 @@ export interface SvgPackagingOptions {
  * and theme colors so it renders standalone across all viewers and image tools.
  */
 export function packageStandaloneSvg(
-  innerSvgContent: string,
+  rawSvgContent: string,
   bounds: { x: number; y: number; w: number; h: number },
   options: SvgPackagingOptions = {}
 ): string {
@@ -106,6 +120,7 @@ export function packageStandaloneSvg(
   const isTransparent = theme === 'transparent';
 
   const bg = isTransparent ? 'none' : isLight ? '#ffffff' : '#1e1e1e';
+  const cardBg = isLight ? '#f3f3f3' : '#252526';
   const cardBorder = isLight ? '#d4d4d4' : '#3c3c3c';
   const textMain = isLight ? '#333333' : '#cccccc';
   const textSub = isLight ? '#717171' : '#858585';
@@ -120,7 +135,26 @@ export function packageStandaloneSvg(
   const vx = Math.floor(bounds.x);
   const vy = Math.floor(bounds.y);
 
-  // Static subset of webview/styles.css's real classes, with literal colors (no --vscode-* vars outside the webview).
+  // Sanitize inner content:
+  // 1. Strip pan/zoom transform from <g id="world">
+  let cleanContent = rawSvgContent.replace(
+    /<g id="world"[^>]*>/i,
+    '<g id="world">'
+  );
+
+  // 2. Convert CSS style transforms `style="transform:translate(10px,20px)"` to standard SVG attribute `transform="translate(10,20)"`
+  cleanContent = cleanContent.replace(/style="transform:\s*translate\((-?\d+(?:\.\d+)?)(?:px)?,\s*(-?\d+(?:\.\d+)?)(?:px)?\);?"/gi, 'transform="translate($1,$2)"');
+
+  // 3. Resolve CSS variables to concrete hex codes
+  cleanContent = cleanContent
+    .replace(/var\(--vscode-editorWidget-background,[^)]+\)/g, cardBg)
+    .replace(/var\(--vscode-widget-border,[^)]+\)/g, cardBorder)
+    .replace(/var\(--vscode-editor-foreground,[^)]+\)/g, textMain)
+    .replace(/var\(--vscode-descriptionForeground,[^)]+\)/g, textSub)
+    .replace(/var\(--vscode-editorLineNumber-foreground,[^)]+\)/g, edgeColor)
+    .replace(/var\(--vscode-charts-blue,[^)]+\)/g, calleeColor)
+    .replace(/var\(--vscode-charts-orange,[^)]+\)/g, callerColor);
+
   const styles = `
     .cg-bg { fill: ${bg}; }
     svg text { font-family: ${font}; }
@@ -134,6 +168,7 @@ export function packageStandaloneSvg(
     .port { fill: ${edgeColor}; }
     .edge .hit { display: none; }
     .edge .line { fill: none; stroke: ${edgeColor}; stroke-width: 1.4; opacity: .85; }
+    .cardborder { stroke: ${cardBorder}; stroke-width: 1; fill: none; }
     .elabel rect { fill: ${labelBg}; stroke: ${edgeColor}; }
     .elabel text { font-size: 10px; fill: ${textMain}; }
     .changebar { fill: #e2c08d; }
@@ -148,12 +183,27 @@ export function packageStandaloneSvg(
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${vx} ${vy} ${width} ${height}" width="${width}" height="${height}">
-  <style type="text/css">
-    ${styles}
-  </style>
+  <defs>
+    <style type="text/css">
+      ${styles}
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="${edgeColor}" />
+    </marker>
+    <marker id="arrow-on" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="${calleeColor}" />
+    </marker>
+    <marker id="arrow-focus" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="${callerColor}" />
+    </marker>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.25" />
+    </filter>
+  </defs>
   ${!isTransparent ? `<rect x="${vx}" y="${vy}" width="${width}" height="${height}" class="cg-bg" />` : ''}
   <g id="cg-content">
-    ${innerSvgContent}
+    ${cleanContent}
   </g>
 </svg>`;
 }
+

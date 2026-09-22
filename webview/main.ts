@@ -1135,7 +1135,7 @@ async function renderGraph(data: GraphData) {
       .join('\n');
 
     cardParts.push(`
-      <g class="card" data-file="${escapeAttr(file.id)}" style="transform:translate(${x}px,${y}px)" filter="url(#cardShadow)">
+      <g class="card" data-file="${escapeAttr(file.id)}" transform="translate(${x},${y})" style="transform:translate(${x}px,${y}px)" filter="url(#cardShadow)">
         <clipPath id="clip-${fi}"><rect width="${w}" height="${h}" rx="${CORNER}" /></clipPath>
         <g clip-path="url(#clip-${fi})">
           <rect width="${w}" height="${h}" fill="var(--vscode-editorWidget-background,#252526)" />
@@ -2014,53 +2014,67 @@ async function renderGraph(data: GraphData) {
     ctx.fillStyle = '#1e1e1e';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    const cleanName = data.rootLabel ? data.rootLabel.replace(/[^a-zA-Z0-9_-]/g, '_') : 'code-graph';
+
+    const sendPngData = (dataUrl: string) => {
+      vscode.postMessage({
+        command: 'exportDiagram',
+        format: 'png',
+        action: action,
+        data: dataUrl,
+        filename: `${cleanName}.png`,
+      });
+    };
+
     const img = new Image();
-    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(svgBlob);
+    const encodedSvg = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
 
     img.onload = () => {
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(blobUrl);
-
-      const cleanName = data.rootLabel ? data.rootLabel.replace(/[^a-zA-Z0-9_-]/g, '_') : 'code-graph';
-
-      if (action === 'save') {
+      try {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/png');
+
+        if (action === 'save') {
+          sendPngData(dataUrl);
+        } else {
+          canvas.toBlob(async (blob) => {
+            if (blob && navigator.clipboard && navigator.clipboard.write) {
+              try {
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                const statusEl = main.querySelector<HTMLElement>('#status');
+                if (statusEl) statusEl.textContent = 'PNG image copied to clipboard';
+                return;
+              } catch {
+                // fallback to postMessage
+              }
+            }
+            sendPngData(dataUrl);
+          }, 'image/png');
+        }
+      } catch (err) {
+        console.error('Error drawing SVG to canvas', err);
         vscode.postMessage({
           command: 'exportDiagram',
-          format: 'png',
-          action: 'save',
-          data: dataUrl,
-          filename: `${cleanName}.png`,
+          format: 'svg',
+          action: action,
+          data: svgContent,
+          filename: `${cleanName}.svg`,
         });
-      } else {
-        canvas.toBlob(async (blob) => {
-          if (blob && navigator.clipboard && navigator.clipboard.write) {
-            try {
-              await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-              const statusEl = main.querySelector<HTMLElement>('#status');
-              if (statusEl) statusEl.textContent = 'PNG image copied to clipboard';
-              return;
-            } catch {
-              // fallback
-            }
-          }
-          const dataUrl = canvas.toDataURL('image/png');
-          vscode.postMessage({
-            command: 'exportDiagram',
-            format: 'png',
-            action: 'copy',
-            data: dataUrl,
-          });
-        }, 'image/png');
       }
     };
 
-    img.onerror = () => {
-      URL.revokeObjectURL(blobUrl);
+    img.onerror = (err) => {
+      console.error('Image load error for rasterizing SVG', err);
+      vscode.postMessage({
+        command: 'exportDiagram',
+        format: 'svg',
+        action: action,
+        data: svgContent,
+        filename: `${cleanName}.svg`,
+      });
     };
 
-    img.src = blobUrl;
+    img.src = encodedSvg;
   }
 
   main.querySelector('#exp-save-png')?.addEventListener('click', () => {
