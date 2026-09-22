@@ -2,7 +2,7 @@
 
 All notable changes to Code Graph View are recorded here.
 
-## [Unreleased]
+## [0.0.3]
 
 ### Added
 - Review strip in the changes view: changed methods, callers not updated, signature changes, methods with no test found, and removed methods still referenced. Risk bars on methods, a ⚠ risky filter, and a stepper that walks the changes riskiest first.
