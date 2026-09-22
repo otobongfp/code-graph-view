@@ -52,6 +52,13 @@ function isValidMessage(m: WebviewToExtensionMessage): boolean {
       return isText(m.id);
     case 'updateBucketLevel':
       return isText(m.id) && LEVELS.has(m.level);
+    case 'exportDiagram':
+      return (
+        (m.format === 'svg' || m.format === 'png' || m.format === 'mermaid') &&
+        (m.action === 'save' || m.action === 'copy') &&
+        typeof m.data === 'string' &&
+        m.data.length <= 15 * 1024 * 1024
+      );
     default:
       return true;
   }
@@ -252,11 +259,77 @@ export class CodeGraphPanel {
           case 'sendBucketToChat':
             void this.sendBucketToChat();
             break;
+          case 'exportDiagram':
+            void this.handleExportDiagram(message.format, message.action, message.data, message.filename);
+            break;
         }
       },
       null,
       this.disposables
     );
+  }
+
+  private async handleExportDiagram(
+    format: 'svg' | 'png' | 'mermaid',
+    action: 'save' | 'copy',
+    data: string,
+    suggestedFilename?: string
+  ): Promise<void> {
+    if (action === 'copy') {
+      await vscode.env.clipboard.writeText(data);
+      const label = format === 'mermaid' ? 'Mermaid diagram' : format === 'svg' ? 'SVG markup' : 'Image data';
+      vscode.window.setStatusBarMessage(`Code Graph: ${label} copied to clipboard`, 3000);
+      return;
+    }
+
+    const defaultName =
+      suggestedFilename ||
+      (format === 'mermaid' ? 'code-graph.mmd' : format === 'svg' ? 'code-graph.svg' : 'code-graph.png');
+
+    const filters: Record<string, string[]> =
+      format === 'mermaid'
+        ? { 'Mermaid Diagram (*.mmd, *.md)': ['mmd', 'md'] }
+        : format === 'svg'
+        ? { 'Scalable Vector Graphics (*.svg)': ['svg'] }
+        : { 'PNG Image (*.png)': ['png'] };
+
+    const folder =
+      (vscode.window.activeTextEditor && vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri)) ||
+      vscode.workspace.workspaceFolders?.[0];
+
+    const defaultUri = folder ? vscode.Uri.joinPath(folder.uri, defaultName) : vscode.Uri.file(defaultName);
+
+    const targetUri = await vscode.window.showSaveDialog({
+      defaultUri,
+      filters,
+      title: `Export Code Graph as ${format.toUpperCase()}`,
+    });
+
+    if (!targetUri) {
+      return;
+    }
+
+    try {
+      let bytes: Uint8Array;
+      if (format === 'png') {
+        const base64Clean = data.includes(',') ? data.split(',')[1] : data;
+        bytes = Buffer.from(base64Clean, 'base64');
+      } else {
+        bytes = Buffer.from(data, 'utf-8');
+      }
+
+      await vscode.workspace.fs.writeFile(targetUri, bytes);
+      const filename = targetUri.path.slice(targetUri.path.lastIndexOf('/') + 1);
+      const choice = await vscode.window.showInformationMessage(
+        `Code Graph exported to ${filename}`,
+        'Open File'
+      );
+      if (choice === 'Open File') {
+        await vscode.commands.executeCommand('vscode.open', targetUri);
+      }
+    } catch (err) {
+      vscode.window.showErrorMessage(`Failed to export code graph: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private async copyBucket() {

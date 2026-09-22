@@ -1,6 +1,7 @@
 import ELK, { ElkNode } from 'elkjs/lib/elk.bundled.js';
 import styles from './styles.css';
 import { reviewDiff } from '../src/diffReview';
+import { generateMermaid, packageStandaloneSvg } from '../src/diagramExport';
 import type {
   BucketItemRef,
   BucketSummary,
@@ -63,6 +64,7 @@ const ICONS = {
   signature: `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4h2.5a2 2 0 012 2v4a2 2 0 002 2h1.5M3 8.5h6"/></svg>`,
   robot: `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="11" height="9" rx="2.5"/><path d="M8 1.5v3M1 9h1.5M13.5 9H15"/><circle cx="5.5" cy="8.5" r="1.1" fill="currentColor"/><circle cx="10.5" cy="8.5" r="1.1" fill="currentColor"/><path d="M5.5 11h5"/></svg>`,
   plus: `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+  export: `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8v5a1 1 0 001 1h6a1 1 0 001-1V8M8 1v8.5M5.5 3.5L8 1l2.5 2.5"/></svg>`,
   refresh: `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8A5.5 5.5 0 1 1 12 4.2L13.5 2.5V7H9"/></svg>`,
   help: `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M6.5 6.2a1.5 1.5 0 0 1 2.8.6c0 .8-1.3 1.1-1.3 2"/><circle cx="8" cy="11.8" r=".8" fill="currentColor"/></svg>`,
   diff: `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="4" cy="4" r="2"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="6" r="2"/><path d="M4 6v4M4 8a4 4 0 0 0 4-4v0a4 4 0 0 1 4 2"/></svg>`,
@@ -1221,8 +1223,36 @@ async function renderGraph(data: GraphData) {
             ${ICONS.robot}
             <span id="ctxbtn-badge" class="tb-badge"${currentBucketSummary && currentBucketSummary.items.length > 0 ? '' : ' hidden'}>${currentBucketSummary?.items.length ?? 0}</span>
           </button>
+          <button id="exportbtn" class="tb-btn tb-icon-btn" title="Export diagram: Mermaid, SVG, or PNG">${ICONS.export}</button>
           <button id="refresh" class="tb-btn tb-icon-btn" title="Reload: refresh graph from language server">${ICONS.refresh}</button>
           <button id="helpbtn" class="tb-btn tb-icon-btn round" title="Help & shortcuts (?)">${ICONS.help}</button>
+        </div>
+      </div>
+      <div id="export-menu" class="cg-popover" hidden>
+        <div class="cg-popover-header">Export Diagram</div>
+        <div class="cg-popover-body">
+          <button class="cg-menu-item" id="exp-mermaid">
+            <span class="cg-menu-label">Copy Mermaid Diagram</span>
+            <span class="cg-menu-sub">Markdown flowchart for GitHub, PRs &amp; docs</span>
+          </button>
+          <div class="cg-menu-divider"></div>
+          <button class="cg-menu-item" id="exp-save-svg">
+            <span class="cg-menu-label">Save SVG File...</span>
+            <span class="cg-menu-sub">Scalable vector graphics diagram</span>
+          </button>
+          <button class="cg-menu-item" id="exp-copy-svg">
+            <span class="cg-menu-label">Copy SVG Code</span>
+            <span class="cg-menu-sub">Raw SVG markup to clipboard</span>
+          </button>
+          <div class="cg-menu-divider"></div>
+          <button class="cg-menu-item" id="exp-save-png">
+            <span class="cg-menu-label">Save PNG Image (2x)...</span>
+            <span class="cg-menu-sub">High-resolution raster image</span>
+          </button>
+          <button class="cg-menu-item" id="exp-copy-png">
+            <span class="cg-menu-label">Copy PNG Image</span>
+            <span class="cg-menu-sub">Copy image bitmap to clipboard</span>
+          </button>
         </div>
       </div>
       <div id="legend" hidden>
@@ -1236,6 +1266,7 @@ async function renderGraph(data: GraphData) {
           <div class="row2"><span class="lg-icon">${ICONS.isolate}</span><span><b>Isolate</b> (<kbd>Esc</kbd> to clear): Focus only on the traced call path</span></div>
           <div class="row2"><span class="lg-icon">${ICONS.signature}</span><span><b>Signature</b> (<kbd>Alt</kbd>+<kbd>S</kbd>): Inspect parameters, return types & TypeScript definitions</span></div>
           <div class="row2"><span class="lg-icon">${ICONS.robot}</span><span><b>AI Context</b> (<kbd>Alt</kbd>+<kbd>C</kbd>): Curate methods & export compressed context for LLM</span></div>
+          <div class="row2"><span class="lg-icon">${ICONS.export}</span><span><b>Export</b>: Export graph as Mermaid markdown, SVG vector, or PNG image</span></div>
           <div class="row2"><span class="lg-icon">${ICONS.refresh}</span><span><b>Reload</b>: Refresh code analysis from language server</span></div>
         </div>
         <div class="lg">
@@ -1898,9 +1929,146 @@ async function renderGraph(data: GraphData) {
     rerender();
   });
   const legendEl = main.querySelector<HTMLElement>('#legend')!;
+  const exportMenuEl = main.querySelector<HTMLElement>('#export-menu')!;
+  const exportBtn = main.querySelector<HTMLElement>('#exportbtn')!;
+
   main.querySelector('#helpbtn')!.addEventListener('click', (ev) => {
     legendEl.hidden = !legendEl.hidden;
     (ev.currentTarget as HTMLElement).classList.toggle('on', !legendEl.hidden);
+    if (!legendEl.hidden && exportMenuEl) {
+      exportMenuEl.hidden = true;
+      exportBtn?.classList.remove('on');
+    }
+  });
+
+  exportBtn?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    exportMenuEl.hidden = !exportMenuEl.hidden;
+    exportBtn.classList.toggle('on', !exportMenuEl.hidden);
+    if (!exportMenuEl.hidden) {
+      legendEl.hidden = true;
+      main.querySelector('#helpbtn')?.classList.remove('on');
+    }
+  });
+
+  function getCleanExportSvg(): string {
+    const graphEl = main.querySelector<SVGSVGElement>('#graph');
+    if (!graphEl) return '';
+    return packageStandaloneSvg(graphEl.innerHTML, bounds, { theme: 'dark' });
+  }
+
+  main.querySelector('#exp-mermaid')?.addEventListener('click', () => {
+    exportMenuEl.hidden = true;
+    exportBtn?.classList.remove('on');
+    const mmd = generateMermaid(data, mode);
+    vscode.postMessage({
+      command: 'exportDiagram',
+      format: 'mermaid',
+      action: 'copy',
+      data: mmd,
+    });
+  });
+
+  main.querySelector('#exp-save-svg')?.addEventListener('click', () => {
+    exportMenuEl.hidden = true;
+    exportBtn?.classList.remove('on');
+    const svgContent = getCleanExportSvg();
+    const cleanName = data.rootLabel ? data.rootLabel.replace(/[^a-zA-Z0-9_-]/g, '_') : 'code-graph';
+    vscode.postMessage({
+      command: 'exportDiagram',
+      format: 'svg',
+      action: 'save',
+      data: svgContent,
+      filename: `${cleanName}.svg`,
+    });
+  });
+
+  main.querySelector('#exp-copy-svg')?.addEventListener('click', () => {
+    exportMenuEl.hidden = true;
+    exportBtn?.classList.remove('on');
+    const svgContent = getCleanExportSvg();
+    vscode.postMessage({
+      command: 'exportDiagram',
+      format: 'svg',
+      action: 'copy',
+      data: svgContent,
+    });
+  });
+
+  async function triggerPngExport(action: 'save' | 'copy') {
+    exportMenuEl.hidden = true;
+    exportBtn?.classList.remove('on');
+    const svgContent = getCleanExportSvg();
+    if (!svgContent) return;
+
+    const width = Math.max(200, Math.ceil(bounds.w));
+    const height = Math.max(160, Math.ceil(bounds.h));
+    const scale = 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.fillStyle = '#1e1e1e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const img = new Image();
+    const svgBlob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(svgBlob);
+
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(blobUrl);
+
+      const cleanName = data.rootLabel ? data.rootLabel.replace(/[^a-zA-Z0-9_-]/g, '_') : 'code-graph';
+
+      if (action === 'save') {
+        const dataUrl = canvas.toDataURL('image/png');
+        vscode.postMessage({
+          command: 'exportDiagram',
+          format: 'png',
+          action: 'save',
+          data: dataUrl,
+          filename: `${cleanName}.png`,
+        });
+      } else {
+        canvas.toBlob(async (blob) => {
+          if (blob && navigator.clipboard && navigator.clipboard.write) {
+            try {
+              await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+              const statusEl = main.querySelector<HTMLElement>('#status');
+              if (statusEl) statusEl.textContent = 'PNG image copied to clipboard';
+              return;
+            } catch {
+              // fallback
+            }
+          }
+          const dataUrl = canvas.toDataURL('image/png');
+          vscode.postMessage({
+            command: 'exportDiagram',
+            format: 'png',
+            action: 'copy',
+            data: dataUrl,
+          });
+        }, 'image/png');
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(blobUrl);
+    };
+
+    img.src = blobUrl;
+  }
+
+  main.querySelector('#exp-save-png')?.addEventListener('click', () => {
+    void triggerPngExport('save');
+  });
+
+  main.querySelector('#exp-copy-png')?.addEventListener('click', () => {
+    void triggerPngExport('copy');
   });
   main.querySelector('#sigbtn')!.addEventListener('click', () => {
     if (dockOpen && activeDockTab === 'sig') {
@@ -2799,6 +2967,16 @@ resultsEl.addEventListener('mousedown', (ev) => {
   const el = (ev.target as Element).closest('.res');
   const r = el ? searchResults[Number(el.getAttribute('data-i'))] : undefined;
   if (r) chooseResult(r);
+});
+document.addEventListener('click', (ev) => {
+  const exportMenuEl = main.querySelector<HTMLElement>('#export-menu');
+  const exportBtn = main.querySelector<HTMLElement>('#exportbtn');
+  if (exportMenuEl && !exportMenuEl.hidden) {
+    if (!exportMenuEl.contains(ev.target as Node) && ev.target !== exportBtn) {
+      exportMenuEl.hidden = true;
+      exportBtn?.classList.remove('on');
+    }
+  }
 });
 document.addEventListener('keydown', (ev) => {
   const tag = (ev.target as HTMLElement | null)?.tagName;

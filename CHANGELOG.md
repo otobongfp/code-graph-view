@@ -2,12 +2,22 @@
 
 All notable changes to Code Graph View are recorded here.
 
+## [0.1.0]
+
+### Added
+- Export diagram toolbar action with support for three formats:
+  - **Mermaid Markdown (`.mmd` / ````mermaid`)**: Generates clean GitHub-compatible flowcharts with file subgraphs and caller-to-callee directional links.
+  - **Standalone Scalable Vector Graphics (`.svg`)**: Vector-accurate SVG with inlined styles, fonts, and arrowhead markers for use in documentation, RFCs, and image editors.
+  - **High-Resolution PNG (`.png`)**: 2x Retina canvas rendering with options to save directly to disk or copy to the system clipboard.
+- Services Mode Mermaid export with aggregated call counts on connecting edges.
+
 ## [0.0.4]
 
 ### Added
-- Expanded multi-language support: added **Java**, **C#**, **C / C++**, **PHP**, and **Kotlin** alongside TypeScript/JavaScript, Go, Rust, and Python.
-- Multi-language signature and type parsing for Java, C#, C/C++, PHP, and Kotlin callables and working-tree diffs.
-- Test detection and dependency filtering for `.gradle`, `build`, `bin`, and `obj` directories.
+- Expanded multi-language support from 4 to 15 languages: added **Java**, **C#**, **C / C++**, **PHP**, **Kotlin**, **Dart / Flutter**, **Ruby**, **Swift**, **Scala**, **Zig**, and **Lua** alongside TypeScript/JavaScript, Go, Rust, and Python.
+- Multi-language signature and type parsing for all 15 supported languages for callables and working-tree diffs.
+- Test detection and build/dependency filtering for `.gradle`, `build`, `bin`, `obj`, `.dart_tool`, `.build`, `.swiftpm`, `.metals`, and `.bloop` directories.
+- Editor title menu button and command support across all 15 language identifiers.
 
 ## [0.0.3]
 

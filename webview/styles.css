@@ -330,3 +330,70 @@
   .card.hasactive .cardborder { stroke:var(--vscode-charts-yellow,#e2c541); stroke-width:2; }
   .row.pulse .rowbg { animation:pulse .55s ease 3; }
   @keyframes pulse { 50% { stroke-width:6; fill-opacity:.55; } }
+
+  /* Export Popover Menu */
+  .cg-popover {
+    position: absolute;
+    top: 38px;
+    right: 32px;
+    z-index: 1000;
+    min-width: 240px;
+    background: var(--vscode-menu-background, var(--vscode-editorWidget-background, #252526));
+    border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.3)));
+    border-radius: 4px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.38);
+    overflow: hidden;
+    font-family: inherit;
+    animation: fadeInPop 0.12s ease-out;
+  }
+  @keyframes fadeInPop {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .cg-popover-header {
+    padding: 8px 12px 6px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--vscode-descriptionForeground, #858585);
+    border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.18));
+  }
+  .cg-popover-body {
+    padding: 4px 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .cg-menu-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--vscode-editor-foreground, #ccc);
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    width: 100%;
+    transition: background 0.1s ease;
+  }
+  .cg-menu-item:hover, .cg-menu-item:focus {
+    background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.18)));
+    color: var(--vscode-menu-selectionForeground, var(--vscode-editor-foreground, #fff));
+    outline: none;
+  }
+  .cg-menu-label {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .cg-menu-sub {
+    font-size: 10.5px;
+    color: var(--vscode-descriptionForeground, #858585);
+    margin-top: 1px;
+  }
+  .cg-menu-divider {
+    height: 1px;
+    background: var(--vscode-widget-border, rgba(128, 128, 128, 0.18));
+    margin: 4px 0;
+  }

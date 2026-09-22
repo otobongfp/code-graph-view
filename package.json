@@ -8,7 +8,7 @@
   },
   "icon": "images/logo.png",
   "description": "Explore code as an interactive call graph: trace callers and callees, see what a git change affects, and curate compact context for AI assistants.",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "license": "MIT",
   "keywords": [
     "call graph",

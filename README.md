@@ -71,6 +71,11 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 ### 5. Services Architecture Mode
 - Switch between **Detailed Methods Mode** (fine-grained call graph) and **Services Mode** (file- and module-level dependencies with call counts).
 
+### 6. Diagram Export & Sharing
+- **Mermaid Flowchart**: Copy structured `mermaid` markup ready to embed into GitHub markdown files, PR descriptions, Obsidian, or Notion.
+- **Standalone SVG**: Export clean, vector-accurate standalone SVGs with inlined styles and markers for architecture RFCs and documentation.
+- **High-Resolution PNG**: Render 2x Retina canvas bitmaps with one-click Save or Copy to system clipboard.
+
 ---
 
 ## Keyboard Shortcuts

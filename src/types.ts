@@ -308,6 +308,17 @@ export interface BucketUpdatedMessage {
   summary: BucketSummary;
 }
 
+export type ExportFormat = 'svg' | 'png' | 'mermaid';
+export type ExportAction = 'save' | 'copy';
+
+export interface ExportDiagramMessage {
+  command: 'exportDiagram';
+  format: ExportFormat;
+  action: ExportAction;
+  data: string;
+  filename?: string;
+}
+
 export type WebviewToExtensionMessage =
   | OpenFileMessage
   | RequestRefreshMessage
@@ -326,7 +337,8 @@ export type WebviewToExtensionMessage =
   | UpdateBucketLevelMessage
   | ClearBucketMessage
   | CopyBucketMessage
-  | SendBucketToChatMessage;
+  | SendBucketToChatMessage
+  | ExportDiagramMessage;
 
 export type ExtensionToWebviewMessage =
   | SignatureResultMessage
