@@ -300,6 +300,17 @@
   .row.pulse { animation: pulseNode 0.35s ease-out; }
   .changebar { fill:var(--vscode-gitDecoration-modifiedResourceForeground,#e2c08d); }
   .row.changed.added .changebar { fill:var(--vscode-gitDecoration-addedResourceForeground,#81b88b); }
+  .riskbar.high { fill:var(--vscode-editorError-foreground,#f14c4c); }
+  .riskbar.medium { fill:var(--vscode-charts-orange,#d18616); }
+  #reviewbar { display:flex; align-items:center; gap:8px; padding:5px 12px; flex-shrink:0; font-size:11.5px;
+    border-bottom:1px solid var(--vscode-widget-border, rgba(128,128,128,.25)); flex-wrap:wrap; }
+  .rv-chip { padding:1px 9px; border-radius:10px; border:1px solid var(--vscode-widget-border, rgba(128,128,128,.4)); background:transparent;
+    color:var(--vscode-editor-foreground); font:inherit; }
+  button.rv-risky { cursor:pointer; color:var(--vscode-editorError-foreground,#f14c4c); }
+  button.rv-risky.on { background:var(--vscode-editorError-foreground,#f14c4c); color:#fff; }
+  .rv-note { color:var(--vscode-descriptionForeground); cursor:help; }
+  .rv-step { margin-left:auto; display:flex; align-items:center; gap:4px; color:var(--vscode-descriptionForeground); }
+  .rv-next svg { transform:scaleX(-1); }
   .dsum { font-weight:700; color:var(--vscode-editor-foreground); }
   .otherbtn { background:var(--vscode-button-secondaryBackground,#3a3d41); color:var(--vscode-button-secondaryForeground,#fff);
     border:none; padding:1px 9px; border-radius:2px; cursor:pointer; font-size:11.5px; }

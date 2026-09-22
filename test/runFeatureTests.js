@@ -8,6 +8,8 @@ async function runFeatureTests() {
     path.join(__dirname, 'contextCompressor.test.ts'),
     path.join(__dirname, 'signatureParser.test.ts'),
     path.join(__dirname, 'gitDiffParser.test.ts'),
+    path.join(__dirname, 'diffReview.test.ts'),
+    path.join(__dirname, 'analysis.test.ts'),
   ];
 
   const result = await esbuild.build({

@@ -41,6 +41,45 @@ async function changed(repo, source) {
 
 module.exports = [
   [
+    'a changed signature, its untouched caller and the test that reaches it are all picked up',
+    async () => {
+      const repo = h.gitRepo('review-sig');
+      repo.write('lib.ts', 'export function load(id: string) {\n  return id;\n}\n');
+      repo.write('use.ts', 'export function run() {\n  return load("y");\n}\n');
+      repo.write('lib.test.ts', 'export function testLoad() {\n  return load("x");\n}\n');
+      repo.sh('git add -A && git commit -q -m first');
+      repo.write('lib.ts', 'export function load(id: number, extra: string) {\n  return id;\n}\n');
+      const r = await changed(repo, 'uncommitted');
+      const id = Object.keys(r.data.diff.changes)[0];
+      assert.deepStrictEqual(r.methods, { 'lib.ts:load': 'modified' });
+      assert.strictEqual(r.data.diff.signatures[id].change, 'breaking');
+      assert.strictEqual(r.data.diff.signatures[id].before, '(id: string)');
+      assert.strictEqual(r.data.diff.signatures[id].after, '(id: number, extra: string)');
+      assert.deepStrictEqual(r.data.diff.testedBy[id], ['lib.test.ts'], 'found although tests are hidden from the graph');
+      assert.ok(!r.data.files.some((f) => f.file.endsWith('lib.test.ts')), 'and still not drawn');
+
+      const { reviewDiff } = h.freshRequire(h.bundleNode(path.join(h.root, 'src', 'diffReview.ts')));
+      const review = reviewDiff(r.data).byId.get(id);
+      assert.strictEqual(review.notUpdated, 1, 'run() calls it and did not change');
+      assert.strictEqual(review.tests, 1);
+      assert.strictEqual(review.level, 'high', 'breaking signature with an untouched caller');
+    },
+  ],
+  [
+    'a body-only change is not a signature change, and a new optional parameter is compatible',
+    async () => {
+      const repo = h.gitRepo('review-sig2');
+      repo.write('a.ts', 'export function f(a: string) {\n  return a;\n}\nexport function g(a: string) {\n  return a;\n}\n');
+      repo.sh('git add -A && git commit -q -m first');
+      repo.write('a.ts', 'export function f(a: string) {\n  return a + "!";\n}\nexport function g(a: string, b?: number) {\n  return a;\n}\n');
+      const r = await changed(repo, 'uncommitted');
+      const [gId] = Object.keys(r.data.diff.signatures);
+      assert.deepStrictEqual(Object.values(r.data.diff.signatures).map((s) => s.change), ['compatible'], 'only g() changed its signature');
+      assert.strictEqual(r.data.files.flatMap((f) => f.symbols).find((x) => x.id === gId).name, 'g');
+      assert.strictEqual(Object.keys(r.data.diff.changes).length, 2, 'both methods changed');
+    },
+  ],
+  [
     'uncommitted: the modified and the new method; everything else is listed as "other"',
     async () => {
       const { repo } = scenario();

@@ -3,7 +3,7 @@ import { buildDiffGraph, buildGraph, clearGraphCache, DEPENDENCY_DIRS, diffRepoR
 import { getGitStatusSummary, listRecentCommits } from './git';
 import { getSignature } from './signatureProvider';
 import { ContextBucketManager } from './contextBucket';
-import { ExtensionToWebviewMessage, GraphData, SearchResult, WebviewToExtensionMessage } from './types';
+import { DiffInfo, ExtensionToWebviewMessage, GraphData, SearchResult, WebviewToExtensionMessage } from './types';
 
 interface Target {
   uri: vscode.Uri;
@@ -62,7 +62,7 @@ function makeDiffTarget(source: string, hintTarget?: Target): Target {
     ? vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri)
     : undefined;
   const uri = hintTarget?.uri ?? (folder ?? vscode.workspace.workspaceFolders?.[0])?.uri ?? vscode.Uri.file('/');
-  const label = DIFF_LABELS[source] ?? `Commit ${source.replace('commit:', '')}`;
+  const label = DIFF_LABELS[source] ?? (source.startsWith('branch:') ? `This branch vs ${source.slice(7)}` : `Commit ${source.replace('commit:', '')}`);
   return { uri, label: `Δ ${label}`, diff: source };
 }
 
@@ -405,7 +405,62 @@ export class CodeGraphPanel {
     }
   }
 
+  /** Files in the diff on screen, so clicking one of them can open the change instead of just the file. */
+  private diffView: { root: string; refs: NonNullable<DiffInfo['refs']>; files: Set<string>; added: Set<string> } | undefined;
+
+  private rememberDiff(data: GraphData) {
+    const info = data.diff;
+    if (!info?.refs) {
+      this.diffView = undefined;
+      return;
+    }
+    const symbolIds = new Set(Object.keys(info.changes));
+    const files = new Set<string>();
+    for (const f of data.files) {
+      if (f.symbols.some((sym) => symbolIds.has(sym.id))) files.add(f.file);
+    }
+    this.diffView = { root: data.rootFile, refs: info.refs, files, added: new Set(info.newFiles ?? []) };
+  }
+
+  /** The built-in git extension's API, which knows how to address a file at a ref; undefined if git is disabled. */
+  private async gitApi(): Promise<{ toGitUri?: (uri: vscode.Uri, ref: string) => vscode.Uri } | undefined> {
+    try {
+      const ext = vscode.extensions.getExtension<{ getAPI(version: 1): { toGitUri?: (uri: vscode.Uri, ref: string) => vscode.Uri } }>('vscode.git');
+      if (!ext) return undefined;
+      const exports = ext.isActive ? ext.exports : await ext.activate();
+      return exports.getAPI(1);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Opens VS Code's own before/after view of `file` at the method; false if it can't, so the caller opens the plain file. */
+  private async openDiff(file: string, line: number, character: number): Promise<boolean> {
+    const view = this.diffView;
+    if (!view || !view.files.has(file) || view.added.has(file)) return false;
+    const { left, right } = view.refs;
+    if (left === null) return false;
+    try {
+      const uri = vscode.Uri.file(file);
+      const gitApi = await this.gitApi();
+      const at = (ref: string): vscode.Uri =>
+        gitApi?.toGitUri?.(uri, ref) ?? uri.with({ scheme: 'git', query: JSON.stringify({ path: uri.fsPath, ref }) });
+      const position = new vscode.Position(line, character);
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        at(left),
+        right === null ? uri : at(right),
+        `${vscode.workspace.asRelativePath(uri)} (${this.panel.title.replace(/^Code Graph: Δ /, '')})`,
+        { viewColumn: vscode.ViewColumn.One, preserveFocus: false, selection: new vscode.Range(position, position) }
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private async openFile(file: string, line: number, character: number) {
+    if (await this.openDiff(file, line, character)) return;
     const doc = await vscode.workspace.openTextDocument(file);
     const editor = await vscode.window.showTextDocument(doc, {
       viewColumn: vscode.ViewColumn.One,
@@ -450,6 +505,7 @@ export class CodeGraphPanel {
   }
 
   private postGraph(data: GraphData, partial = false) {
+    this.rememberDiff(data);
     this.post({ command: 'graphData', data, trail: this.trail.map((t) => t.label), cursor: this.cursor, partial });
   }
 
@@ -469,8 +525,21 @@ export class CodeGraphPanel {
       };
       if (target.diff) {
         const changes = await buildDiffGraph(target.diff, { onProgress, targetUri: target.uri });
-        if (seq === this.seq) {
-          this.postGraph(changes);
+        if (seq !== this.seq) {
+          return;
+        }
+        this.postGraph(changes);
+        if (changes.roots.length > 0 && changes.edges.length === 0) {
+          // A cold language server answers with nothing; give it a moment and look once more.
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          if (seq !== this.seq) {
+            return;
+          }
+          dropEmptyCalls();
+          const again = await buildDiffGraph(target.diff, { targetUri: target.uri });
+          if (seq === this.seq && again.edges.length > changes.edges.length) {
+            this.postGraph(again);
+          }
         }
         return;
       }

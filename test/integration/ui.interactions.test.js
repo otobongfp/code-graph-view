@@ -19,6 +19,37 @@ const setSelect = (view, id, value) => {
 
 module.exports = [
   [
+    'review strip: counts risky changes, filters to them, and steps through the changed methods riskiest first',
+    async () => {
+      const g = h.sampleGraph({
+        roots: ['b1', 'b2'],
+        diff: {
+          source: 'branch', title: 'This branch', summary: '2 methods changed in 1 file',
+          changes: { b1: { kind: 'modified', lines: 2 }, b2: { kind: 'modified', lines: 1 } },
+          other: [], approximate: false,
+        },
+      });
+      const view = await loaded(g);
+      const strip = view.$('#reviewbar').textContent;
+      assert.ok(strip.includes('2 changed'), strip);
+      assert.ok(strip.includes('caller') && strip.includes('not updated'), strip);
+      assert.ok(view.$$('.riskbar').length >= 1, 'a method with untouched callers carries a risk bar');
+      assert.strictEqual(view.$('#rvpos').textContent.trim(), '– / 2');
+
+      view.click(view.$('#rvnext'));
+      await view.wait(400);
+      assert.strictEqual(view.$('#rvpos').textContent.trim(), '1 / 2');
+      assert.strictEqual(view.lastPosted('openFile').file, '/w/b.ts', 'the first stop opens the method in the editor');
+      view.click(view.$('#rvnext'));
+      await view.wait(400);
+      assert.strictEqual(view.$('#rvpos').textContent.trim(), '2 / 2');
+      view.click(view.$('#rvnext'));
+      await view.wait(400);
+      assert.strictEqual(view.$('#rvpos').textContent.trim(), '1 / 2', 'it wraps round');
+      assert.deepStrictEqual(view.errors, []);
+    },
+  ],
+  [
     'breadcrumbs: Back steps through clicked methods first, Forward replays them, the root crumb clears them',
     async () => {
       const view = await loaded(h.sampleGraph(), { trail: ['a.ts', 'b.ts', 'c.ts'], cursor: 1 });

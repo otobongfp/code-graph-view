@@ -30,6 +30,18 @@ function scenario() {
 
 module.exports = [
   [
+    'each source says which two versions it compares, so a change can be opened as a before/after view',
+    async () => {
+      const { repo, sha } = scenario();
+      assert.deepStrictEqual((await computeDiff(repo.dir, 'uncommitted')).refs, { left: 'HEAD', right: null });
+      assert.deepStrictEqual((await computeDiff(repo.dir, 'unstaged')).refs, { left: '', right: null }, 'unstaged compares the index with the file');
+      assert.deepStrictEqual((await computeDiff(repo.dir, 'staged')).refs, { left: 'HEAD', right: '' });
+      const commit = (await computeDiff(repo.dir, `commit:${sha}`)).refs;
+      assert.strictEqual(commit.right, sha);
+      assert.ok(commit.left && commit.left !== commit.right, 'a commit compares with its parent');
+    },
+  ],
+  [
     'unstaged: the edited file and the untracked file, not the staged one',
     async () => {
       const { repo } = scenario();

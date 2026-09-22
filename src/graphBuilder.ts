@@ -1,6 +1,9 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import { computeDiff, repoRootFor } from "./git";
+import { compareCallables } from "./signatureDiff";
+import { parseCallable, parseGenericCallable } from "./tsSignature";
+import { findRemoved } from "./removedCode";
+import { computeDiff, mapLineBack, readAtRef, repoRootFor } from "./git";
 import { CallEdge, DiffInfo, FileNode, GraphData, SymbolRow } from "./types";
 
 const VARIABLE_KINDS = new Set<vscode.SymbolKind>([
@@ -383,8 +386,11 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
   // Several methods and not one of them resolved: the language server has no call hierarchy (or isn't running),
   // which would otherwise look like "these methods call nothing".
   let notice: string | undefined;
-  const snapshot = (): GraphData =>
-    structuredClone({
+  const snapshot = (): GraphData => {
+    if (cfg.diff) {
+      cfg.diff.testedBy = Object.fromEntries([...testCallers].map(([id, files]) => [id, [...files].sort()]));
+    }
+    return structuredClone({
       rootFile: cfg.rootFile,
       rootFileId: cfg.rootFileId,
       rootSymbolId,
@@ -398,6 +404,7 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
       diff: cfg.diff,
       notice,
     });
+  };
 
   let lastProgress = 0;
   const progress = (force = false) => {
@@ -410,6 +417,18 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
   // Remaining hops already explored from a node, so shared callers/callees aren't expanded twice.
   const explored = new Map<string, number>();
 
+  // Tests that call a method are noted even when tests are kept out of the graph.
+  const testCallers = new Map<string, Set<string>>();
+  const noteTests = (callee: string, callers: Handle[]) => {
+    for (const c of callers) {
+      if (isCallable(c.node.kind) && TEST_FILE.test(c.node.uri.path)) {
+        (testCallers.get(callee) ?? testCallers.set(callee, new Set()).get(callee)!).add(
+          vscode.workspace.asRelativePath(c.node.uri),
+        );
+      }
+    }
+  };
+
   const walk = async (start: Handle, direction: Direction) => {
     const limit = direction === "incoming" ? cfg.callerDepth : cfg.calleeDepth;
     let frontier: Handle[] = [start];
@@ -420,6 +439,7 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
       );
       const next: Handle[] = [];
       frontier.forEach((h, i) => {
+        if (direction === "incoming" && cfg.diff) noteTests(h.node.id, results[i]);
         const others = results[i].filter(
           (o) => isCallable(o.node.kind) && isTrackable(o.node.uri),
         );
@@ -542,6 +562,28 @@ export async function buildGraph(
   });
 }
 
+/** The declaration of `name` on or just around `line` (0-based), parsed from the text that follows it. */
+function callableNear(lines: string[], line: number, name: string, filePath?: string) {
+  const mention = new RegExp(`(?<![\\w$])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`);
+  let lang: string | undefined;
+  if (filePath) {
+    if (/\.py$/.test(filePath)) lang = "python";
+    else if (/\.go$/.test(filePath)) lang = "go";
+    else if (/\.rs$/.test(filePath)) lang = "rust";
+  }
+  for (let d = 0; d <= 4; d++) {
+    for (const i of d === 0 ? [line] : [line - d, line + d]) {
+      if (i >= 0 && i < lines.length && mention.test(lines[i])) {
+        const text = lines.slice(i, i + 40).join("\n");
+        return lang ? parseGenericCallable(text, name, lang) : parseCallable(text, name);
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Changed files whose symbols are looked up at the same time. */
+const DIFF_FILE_CONCURRENCY = 6;
 const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|go|rs|py)$/;
 const SKIPPED_DIRS = /(^|\/)(node_modules|dist|out|build|\.next|vendor|target|\.venv|venv|site-packages|__pycache__)\//;
 
@@ -583,40 +625,54 @@ export async function buildDiffGraph(
   const changes: DiffInfo["changes"] = {};
   const other: DiffInfo["other"] = [];
   const exempt = new Set<string>();
+  const signatures: NonNullable<DiffInfo["signatures"]> = {};
   let approximate = false;
 
-  for (const file of diff.files) {
+  // Each file's symbols come from the language server, so ask for several at once and merge in diff order.
+  const perFile = await mapLimit(diff.files, DIFF_FILE_CONCURRENCY, async (file) => {
     const abs = path.join(root, file.path);
     const uri = vscode.Uri.file(abs);
     const firstLine = Math.max(0, (file.ranges[0]?.start ?? 1) - 1);
-    if (!CODE_FILE.test(file.path) || SKIPPED_DIRS.test(file.path)) {
-      other.push({
-        file: abs,
-        label: file.path,
-        note: "not a TS/JS source file",
-        line: firstLine,
-      });
-      continue;
-    }
+    const out = {
+      candidates: [] as RootCandidate[],
+      changes: {} as DiffInfo["changes"],
+      other: [] as DiffInfo["other"],
+      exempt: undefined as string | undefined,
+      approximate: false,
+      signatures: {} as NonNullable<DiffInfo["signatures"]>,
+    };
+    const skip = (note: string) => {
+      out.other.push({ file: abs, label: file.path, note, line: firstLine });
+      return out;
+    };
+    if (!CODE_FILE.test(file.path)) return skip("not a supported source file");
+    if (SKIPPED_DIRS.test(file.path)) return skip("in a dependency or build folder");
     if (settings.hideTests && TEST_FILE.test(file.path)) {
-      other.push({
-        file: abs,
-        label: file.path,
-        note: "test file (hidden by codeGraphView.hideTests)",
-        line: firstLine,
-      });
-      continue;
+      return skip("test file (hidden by codeGraphView.hideTests)");
     }
-    if (!file.exact) approximate = true;
+    if (!file.exact) out.approximate = true;
 
+    let doc: vscode.TextDocument;
     try {
-      await vscode.workspace.openTextDocument(uri);
+      doc = await vscode.workspace.openTextDocument(uri);
     } catch {
-      continue;
+      return out;
     }
     const symbols = collectCandidates(await getDocumentSymbols(uri), (k) =>
       isCallableKind(k, settings.includeConstructors),
     );
+    // Old and new signatures can be compared when the diff has a left ref, hunks and modified status.
+    const comparable =
+      diff.refs.left !== null && file.hunks && file.exact &&
+      file.status === "modified" && CODE_FILE.test(file.path);
+    const oldText = comparable ? await readAtRef(root, diff.refs.left!, file.path) : undefined;
+    const newText = comparable
+      ? diff.refs.right === null
+        ? doc.getText()
+        : (await readAtRef(root, diff.refs.right, file.path)) ?? doc.getText()
+      : undefined;
+    const oldLines = oldText?.split("\n");
+    const newLines = newText?.split("\n") ?? [];
     const matched = new Set<number>();
     let touched = 0;
     for (const symbol of symbols) {
@@ -635,19 +691,26 @@ export async function buildDiffGraph(
       });
       if (lines === 0) continue;
       touched++;
-      changes[idOf(uri, symbol.selectionRange.start)] = {
+      out.changes[idOf(uri, symbol.selectionRange.start)] = {
         kind:
           file.status === "added" || added >= to - from + 1
             ? "added"
             : "modified",
         lines,
       };
-      candidates.push({ uri, symbol });
+      out.candidates.push({ uri, symbol });
+      if (oldLines && file.hunks && out.changes[idOf(uri, symbol.selectionRange.start)].kind === "modified") {
+        const at = symbol.selectionRange.start.line;
+        const now = callableNear(newLines, at, symbol.name, file.path);
+        const before = callableNear(oldLines, mapLineBack(file.hunks, at + 1) - 1, symbol.name, file.path);
+        const change = now && before ? compareCallables(before, now) : undefined;
+        if (change) out.signatures[idOf(uri, symbol.selectionRange.start)] = change;
+      }
     }
-    exempt.add(uri.toString());
+    out.exempt = uri.toString();
     const stray = file.ranges.filter((_, i) => !matched.has(i));
     if (stray.length > 0) {
-      other.push({
+      out.other.push({
         file: abs,
         label: file.path,
         note:
@@ -657,6 +720,15 @@ export async function buildDiffGraph(
         line: Math.max(0, stray[0].start - 1),
       });
     }
+    return out;
+  });
+  for (const r of perFile) {
+    candidates.push(...r.candidates);
+    Object.assign(changes, r.changes);
+    other.push(...r.other);
+    if (r.exempt) exempt.add(r.exempt);
+    if (r.approximate) approximate = true;
+    Object.assign(signatures, r.signatures);
   }
   for (const gone of diff.deleted) {
     other.push({
@@ -667,13 +739,29 @@ export async function buildDiffGraph(
     });
   }
 
+  // Methods the change removed that something still calls by name.
+  const removed = await findRemoved(root, diff).catch(() => []);
+  for (const r of removed) {
+    const first = r.refs[0];
+    other.push({
+      file: path.join(root, first.file),
+      label: `removed: ${r.name}`,
+      note: `${r.refs.length}${r.refs.length >= 20 ? "+" : ""} possible remaining call${r.refs.length === 1 ? "" : "s"} by name, e.g. ${first.file}:${first.line} (declared in ${r.file})`,
+      line: first.line - 1,
+    });
+  }
+
   const info: DiffInfo = {
+    removed: removed.length,
     source,
     title: diff.title,
     summary: "",
     changes,
     other,
     approximate,
+    refs: diff.refs,
+    signatures,
+    newFiles: diff.files.filter((f) => f.status === "added").map((f) => path.join(root, f.path)),
   };
   const summarize = () => {
     const methods = Object.keys(info.changes).length;

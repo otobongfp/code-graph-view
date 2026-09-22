@@ -2,6 +2,20 @@
 
 All notable changes to Code Graph View are recorded here.
 
+## [Unreleased]
+
+### Added
+- Review strip in the changes view: changed methods, callers not updated, signature changes, methods with no test found, and removed methods still referenced. Risk bars on methods, a ⚠ risky filter, and a stepper that walks the changes riskiest first.
+- Clicking a changed method opens VS Code's before/after diff at that method.
+- Signature-change detection for TypeScript/JavaScript (working-tree diffs), marking each as breaking or compatible.
+- Removed methods that something still calls by name are listed under "Other changes".
+- *Code Graph: Review a Pull Request* command; changes can also be compared with a named base (`branch:<ref>`).
+
+### Changed
+- Changed files are analysed in parallel, and staged/commit line numbers are mapped with one git call instead of one per file.
+- A cold language server no longer leaves the changes view empty: it retries once.
+- Skipped files in the changes view say why ("in a dependency or build folder" or "not a supported source file").
+
 ## [0.0.2]
 
 ### Fixed

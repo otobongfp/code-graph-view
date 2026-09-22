@@ -57,7 +57,9 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 - **Pre-Built & Custom Prompts**: Choose from *Explain this flow*, *Find bugs & edge cases*, *Generate unit tests*, or type custom instructions.
 
 ### 3. Git Impact & Blast Radius Analysis
-- **Inspect Live Changes**: Filter the graph to show only methods touched by uncommitted edits, staged changes, PR branches (`HEAD vs main`), or recent commits.
+- **Inspect Live Changes**: Filter the graph to show only methods touched by uncommitted edits, staged changes, PR branches (`HEAD vs main`), or recent commits. Clicking a changed method opens VS Code's before/after diff at that method.
+- **Review a Change**: In the changes view a strip above the graph summarises the risk: changed methods, callers this change did not update, signature changes (TypeScript/JavaScript, working-tree diffs), modified methods with no test found reaching them, and removed methods something still seems to call. A red or orange bar marks the risky methods, **⚠ risky** filters to them, and the ‹ › stepper walks the changes riskiest first.
+- **Review a Pull Request**: Run *Code Graph: Review a Pull Request* with a number or link. It checks the branch out (using the GitHub CLI when installed, otherwise GitHub's pull ref) and compares it with the PR's base.
 - **Color-Coded Status**: Amber indicators mark modified methods; green indicators mark newly added symbols.
 - **Callers Impact**: Immediately identify all upstream callers that could break from your modifications.
 
@@ -101,6 +103,8 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 ## Requirements
 
 The graph is built from your language server's **call hierarchy**, so each language needs an extension that provides it: TypeScript/JavaScript (built in), Go (gopls, via the Go extension), Rust (rust-analyzer) and Python (Pylance). The git changes view needs `git` on your PATH and a trusted workspace.
+
+**What the review numbers mean.** Callers come from the call hierarchy, so calls through interfaces, callbacks, events, dependency injection or reflection are not seen: treat the counts as a minimum. "No test found" means no test-named file (`*.test.*`, `*.spec.*`, `__tests__`, `_test.go`, `test_*.py`) was found among the calls that reach a method, not that none exists. "Removed, still referenced" is a text search by name, so check each hit.
 
 ---
 

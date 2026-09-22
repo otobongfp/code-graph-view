@@ -13,7 +13,17 @@ function symbolsOf(fsPath) {
 const commands = { async executeCommand(cmd, ...a) {
   if (cmd === 'vscode.executeDocumentSymbolProvider') return fs.existsSync(a[0].fsPath) ? symbolsOf(a[0].fsPath) : [];
   if (cmd === 'vscode.prepareCallHierarchy') { const s = symbolsOf(a[0].fsPath).find((x) => x.range.contains(a[1])); return s ? [{ name: s.name, kind: s.kind, uri: a[0], range: s.range, selectionRange: s.selectionRange, _sessionId: 's' }] : []; }
+  if (cmd === 'vscode.provideIncomingCalls') {   // callers by text: any other function in the repo root whose body mentions `name(`
+    const name = a[0].name; const out = [];
+    for (const f of fs.readdirSync(ROOT).filter((x) => x.endsWith('.ts'))) {
+      const p = pathm.join(ROOT, f); const lines = fs.readFileSync(p, 'utf8').split('\n');
+      for (const s of symbolsOf(p)) {
+        if (s.name === name) continue;
+        if (new RegExp('\\b' + name + '\\s*\\(').test(lines.slice(s.range.start.line + 1, s.range.end.line).join('\n'))) out.push({ from: { name: s.name, kind: s.kind, uri: Uri.file(p), range: s.range, selectionRange: s.selectionRange, _sessionId: 's' }, fromRanges: [] });
+      }
+    }
+    return out; }
   return []; } };
 const folder = { uri: Uri.file(ROOT) };
-const workspace = { workspaceFolders: [folder], getWorkspaceFolder: () => folder, asRelativePath: (u) => pathm.relative(ROOT, u.path || String(u)), getConfiguration: () => ({ get: (k, d) => d }), async openTextDocument() { return {}; } };
+const workspace = { workspaceFolders: [folder], getWorkspaceFolder: () => folder, asRelativePath: (u) => pathm.relative(ROOT, u.path || String(u)), getConfiguration: () => ({ get: (k, d) => d }), async openTextDocument(u) { const file = u && (u.fsPath || u.path || String(u)); return { getText: () => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } } }; } };
 module.exports = { Position, Range, Uri, SymbolKind, commands, workspace, window: { activeTextEditor: undefined } };

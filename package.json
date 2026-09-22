@@ -8,7 +8,7 @@
   },
   "icon": "images/logo.png",
   "description": "Explore code as an interactive call graph: trace callers and callees, see what a git change affects, and curate compact context for AI assistants.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "MIT",
   "keywords": [
     "call graph",
@@ -79,6 +79,10 @@
       {
         "command": "codeGraphView.openDiff",
         "title": "Code Graph: Show Git Changes"
+      },
+      {
+        "command": "codeGraphView.reviewPullRequest",
+        "title": "Code Graph: Review a Pull Request"
       },
       {
         "command": "codeGraphView.refresh",

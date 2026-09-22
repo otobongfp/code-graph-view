@@ -1,5 +1,6 @@
 import ELK, { ElkNode } from 'elkjs/lib/elk.bundled.js';
 import styles from './styles.css';
+import { reviewDiff } from '../src/diffReview';
 import type {
   BucketItemRef,
   BucketSummary,
@@ -48,7 +49,7 @@ function pageSize(): number {
 const layoutCache = new Map<string, ElkNode>();
 
 const HINT_METHODS = 'Click a method to trace its calls and open it · double-click to start from it · ? for help';
-const HINT_DIFF = 'Only changed methods are shown (amber = modified, green = new) · Callers shows what a change could affect · ? for help';
+const HINT_DIFF = 'Only changed methods are shown (amber = modified, green = new, red/orange bar = callers not updated) · Callers shows what a change could affect · ? for help';
 const HINT_SERVICES = 'One box per file; a number on a line = calls between two files · click to trace · ? for help';
 
 const ICONS = {
@@ -264,6 +265,9 @@ interface FlowStep {
 let flowTrail: FlowStep[] = [];
 /** Steps peeled off the end of the flow trail by Back, newest last, so Forward can replay them. */
 let flowFwd: FlowStep[] = [];
+/** In the changes view: show only the changed methods that carry risk, and where the Review stepper stands. */
+let riskOnly = false;
+let reviewIdx = -1;
 /** Steps Back/Forward through the flow trail; false means it had nothing to do and the root history should move instead. */
 let flowNav: ((dir: -1 | 1) => boolean) | null = null;
 let renderSeq = 0;
@@ -403,6 +407,10 @@ function buildView(data: GraphData): View {
   const size = pageSize();
   // Paging the root file narrows which methods the graph is drawn from, so only their relations show.
   let activeRoots = data.roots;
+  if (data.diff && riskOnly) {
+    const review = reviewDiff(data);
+    if (review) activeRoots = activeRoots.filter((id) => (review.byId.get(id)?.level ?? 'low') !== 'low');
+  }
   let rootPage: PageInfo | undefined;
   if (mode === 'methods' && !data.rootSymbolId) {
     const rootSet = new Set(data.roots);
@@ -642,6 +650,8 @@ async function renderGraph(data: GraphData) {
   currentData = data;
   const { files, edges, counts, tips, extras, allFiles, allEdges, pageInfo } = buildView(data);
   const isServices = mode === 'services';
+  const review = data.diff ? reviewDiff(data) : null;
+  const stepList = review ? review.methods.filter((m) => !riskOnly || m.level !== 'low') : [];
 
   if (data.files.length === 0 && !data.diff) {
     renderMessage('No functions or methods found (the language server may still be starting — try Refresh).');
@@ -1053,6 +1063,7 @@ async function renderGraph(data: GraphData) {
         const isOpen = geom.calls.length > 0;
         const isRootRow = !isServices && row.id === data.rootSymbolId;
         const change = !isServices ? data.diff?.changes[row.id] : undefined;
+        const risk = change ? review?.byId.get(row.id) : undefined;
         const chipFill = row.kind === 'method' ? 'var(--vscode-charts-blue,#3794ff)' : 'var(--vscode-charts-green,#89d185)';
         const chip = isServices
           ? `<rect x="23" y="${ROW_H / 2 - 7}" width="14" height="14" rx="3" fill="#6b7280" /><text x="30" y="${ROW_H / 2 + 3}" font-size="10" font-weight="700" text-anchor="middle" fill="#fff">≡</text>`
@@ -1071,13 +1082,14 @@ async function renderGraph(data: GraphData) {
         const tip = isServices
           ? tips.get(file.id) ?? row.name
           : change
-            ? `${row.name} — ${change.kind === 'added' ? 'new' : 'modified'}, ${change.lines} line${change.lines === 1 ? '' : 's'} changed (line ${row.line + 1})`
+            ? `${row.name} — ${change.kind === 'added' ? 'new' : 'modified'}, ${change.lines} line${change.lines === 1 ? '' : 's'} changed (line ${row.line + 1})${risk && risk.notUpdated > 0 ? `\n${risk.notUpdated} caller${risk.notUpdated === 1 ? '' : 's'} not updated, in ${risk.files} file${risk.files === 1 ? '' : 's'}` : ''}${data.diff?.signatures?.[row.id] ? `\nSignature ${data.diff.signatures[row.id].change === 'breaking' ? 'changed (may break callers)' : 'extended (compatible)'}: ${data.diff.signatures[row.id].before} → ${data.diff.signatures[row.id].after}` : ''}${risk && change?.kind === 'modified' ? (risk.tests > 0 ? `\nReached by ${risk.tests} test file${risk.tests === 1 ? '' : 's'}` : '\nNo test found reaching it') : ''}`
             : `${row.name}  (line ${row.line + 1})`;
 
         const mainRow = `<g class="row${isRootRow ? ' isroot' : ''}${change ? ` changed ${change.kind}` : ''}" data-sym="${escapeAttr(row.id)}" transform="translate(0,${geom.top})">
           <rect class="rowbg" width="${w}" height="${ROW_H}" />
           ${isRootRow ? `<rect class="rootbar" width="3" height="${ROW_H}" />` : ''}
           ${change ? `<rect class="changebar" width="4" height="${ROW_H}" />` : ''}
+          ${risk && risk.level !== 'low' ? `<rect class="riskbar ${risk.level}" x="4" width="3" height="${ROW_H}" />` : ''}
           <rect class="activebar" width="4" height="${ROW_H}" />
           ${chip}
           <text class="rname" x="44" y="${ROW_H / 2 + 4}">${escapeXml(truncate(row.name, w - 74))}</text>
@@ -1255,6 +1267,27 @@ async function renderGraph(data: GraphData) {
           ? `<div id="otherlist" hidden>${data.diff.other
               .map((o, i) => `<div class="oth" data-i="${i}" title="${escapeAttr(o.file)}"><b>${escapeXml(o.label)}</b><span>${escapeXml(o.note)}</span></div>`)
               .join('')}</div>`
+          : ''
+      }
+      ${
+        review && review.methods.length > 0
+          ? `<div id="reviewbar"><span class="rv-chip">${review.methods.length} changed</span>${
+              review.risky > 0
+                ? `<button id="rvrisky" class="rv-chip rv-risky${riskOnly ? ' on' : ''}" title="Show only the changed methods whose callers weren't updated">⚠ ${review.risky} risky</button>`
+                : ''
+            }<span class="rv-chip" title="Methods that call something this change modified but were not changed themselves">${review.notUpdated} caller${review.notUpdated === 1 ? '' : 's'} not updated</span>${
+              review.signatureChanges > 0
+                ? `<span class="rv-chip" title="Methods whose parameters or return type changed (hover a method for the before and after)">${review.signatureChanges} signature change${review.signatureChanges === 1 ? '' : 's'}</span>`
+                : ''
+            }${
+              review.untested > 0
+                ? `<span class="rv-chip" title="Modified methods with no test file found among the calls to them. Tests that reach them another way (mocks, other naming) would not be seen.">${review.untested} with no test found</span>`
+                : ''
+            }${
+              review.removed > 0
+                ? `<button id="rvremoved" class="rv-chip rv-risky" title="Methods this change removed that something still seems to call. Found by name, so check each one.">${review.removed} removed, still referenced</button>`
+                : ''
+            }<span class="rv-chip rv-note" title="Callers come from the language server's call hierarchy. Calls made through interfaces, callbacks, events, dependency injection or reflection are not seen, so treat these counts as a minimum.">static callers only ⓘ</span><span class="rv-step" title="Walk the changed methods, riskiest first"><button id="rvprev" class="tb-btn tb-icon-btn">${ICONS.back}</button><span id="rvpos">${reviewIdx >= 0 && reviewIdx < stepList.length ? reviewIdx + 1 : '–'} / ${stepList.length}</span><button id="rvnext" class="tb-btn tb-icon-btn rv-next">${ICONS.back}</button></span></div>`
           : ''
       }
       <div id="scroll">
@@ -1828,6 +1861,25 @@ async function renderGraph(data: GraphData) {
       }
     }
   });
+  main.querySelector('#rvrisky')?.addEventListener('click', () => {
+    riskOnly = !riskOnly;
+    reviewIdx = -1;
+    refit = true;
+    rerender();
+  });
+  const stepReview = (dir: 1 | -1) => {
+    if (stepList.length === 0) return;
+    reviewIdx = reviewIdx < 0 ? (dir > 0 ? 0 : stepList.length - 1) : (reviewIdx + dir + stepList.length) % stepList.length;
+    const pos = main.querySelector('#rvpos');
+    if (pos) pos.textContent = `${reviewIdx + 1} / ${stepList.length}`;
+    activateStep(stepList[reviewIdx].id);
+  };
+  main.querySelector('#rvremoved')?.addEventListener('click', () => {
+    const list = main.querySelector<HTMLElement>('#otherlist');
+    if (list) list.hidden = !list.hidden;
+  });
+  main.querySelector('#rvprev')?.addEventListener('click', () => stepReview(-1));
+  main.querySelector('#rvnext')?.addEventListener('click', () => stepReview(1));
   main.querySelector<HTMLSelectElement>('#mode')!.addEventListener('change', (ev) => {
     mode = (ev.target as HTMLSelectElement).value as Mode;
     resetFilters();
@@ -2215,6 +2267,8 @@ window.addEventListener('message', (event: MessageEvent<ExtensionToWebviewMessag
     const leaving = { flow: flowTrail, flowFwd, expanded, depth };
     flowTrail = [];
     flowFwd = [];
+    riskOnly = false;
+    reviewIdx = -1;
     partialSeen = message.partial === true;
     activeId = null;
     revealNext = false;

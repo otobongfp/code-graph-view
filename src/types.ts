@@ -31,6 +31,16 @@ export interface DiffInfo {
   other: Array<{ file: string; label: string; note: string; line: number }>;
   /** True when some positions were estimated because the code changed since the commit. */
   approximate: boolean;
+  /** The two sides of the diff as git refs ('' is the index; null on the left is nothing, on the right the working tree). */
+  refs?: { left: string | null; right: string | null };
+  /** Absolute paths of files the diff adds, which have no earlier version to compare with. */
+  newFiles?: string[];
+  /** Symbol id -> repo-relative test files that call it directly (found even when tests are hidden from the graph). */
+  testedBy?: Record<string, string[]>;
+  /** Symbol id -> how its parameters or return type changed (TypeScript/JavaScript, working-tree diffs only). */
+  signatures?: Record<string, { change: 'breaking' | 'compatible'; before: string; after: string }>;
+  /** How many removed methods still have something calling them by name. */
+  removed?: number;
 }
 
 export interface DiffCommit {

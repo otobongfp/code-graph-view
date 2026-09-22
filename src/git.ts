@@ -27,6 +27,8 @@ export interface FileChange {
   path: string;
   status: 'added' | 'modified';
   ranges: ChangedRange[];
+  /** Old-to-new hunks; only kept when the new side is the file on disk, so line numbers can be mapped back. */
+  hunks?: Hunk[];
   /** False when the code changed since the diff's version, so positions are estimated. */
   exact: boolean;
 }
@@ -35,6 +37,8 @@ export interface DiffResult {
   title: string;
   files: FileChange[];
   deleted: string[];
+  /** The two sides of the diff as git refs: '' is the index, null on the left is "nothing" and on the right the working tree. */
+  refs: { left: string | null; right: string | null };
 }
 
 export interface CommitInfo {
@@ -149,6 +153,21 @@ function rangesOf(hunks: Hunk[]): ChangedRange[] {
   );
 }
 
+/** Where line `line` of the new version sat in the old version (approximate inside a rewritten region). */
+export function mapLineBack(hunks: Hunk[], line: number): number {
+  const swapped = hunks.map((h) => ({ oldStart: h.newStart, oldCount: h.newCount, newStart: h.oldStart, newCount: h.oldCount }));
+  return mapLine(swapped, line).line;
+}
+
+/** The contents of `file` at a git ref ('' is the index), or undefined if it did not exist there. */
+export async function readAtRef(root: string, ref: string, file: string): Promise<string | undefined> {
+  try {
+    return await git(root, ['show', `${ref}:${file}`]);
+  } catch {
+    return undefined;
+  }
+}
+
 async function hasHead(root: string): Promise<boolean> {
   try {
     await git(root, ['rev-parse', '--verify', 'HEAD']);
@@ -243,6 +262,7 @@ export async function computeDiff(root: string, source: string): Promise<DiffRes
   let side: 'worktree' | 'index' | { ref: string } = 'worktree';
   let withUntracked = true;
   const repoHasHead = await hasHead(root);
+  const refs: DiffResult['refs'] = { left: repoHasHead ? 'HEAD' : null, right: null };
 
   if (source === 'uncommitted') {
     title = 'Uncommitted changes';
@@ -253,6 +273,7 @@ export async function computeDiff(root: string, source: string): Promise<DiffRes
     }
   } else if (source === 'unstaged') {
     title = 'Unstaged changes';
+    refs.left = '';
     diffText = await git(root, ['diff', ...flags]).catch(() => '');
   } else if (source === 'staged') {
     title = 'Staged changes';
@@ -262,18 +283,29 @@ export async function computeDiff(root: string, source: string): Promise<DiffRes
       diffText = await git(root, ['diff', '--cached', ...flags, EMPTY_TREE]).catch(() => '');
     }
     side = 'index';
+    refs.right = '';
     withUntracked = false;
-  } else if (source === 'branch') {
+  } else if (source === 'branch' || source.startsWith('branch:')) {
     if (!repoHasHead) {
       throw new Error('No commits in repository yet. Commit your changes first.');
     }
-    const base = await resolveBase(root);
+    let base: string;
+    if (source === 'branch') {
+      base = await resolveBase(root);
+    } else {
+      base = source.slice('branch:'.length);
+      if (!/^[\w][\w./-]*$/.test(base)) throw new Error('That is not a branch name.');
+      await git(root, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`]).catch(() => {
+        throw new Error(`Could not find "${base}" to compare against.`);
+      });
+    }
     let mergeBase = '';
     try {
       mergeBase = (await git(root, ['merge-base', 'HEAD', base])).trim();
     } catch {}
     if (!mergeBase) mergeBase = base;
     title = `This branch vs ${base}`;
+    refs.left = mergeBase;
     diffText = await git(root, ['diff', ...flags, mergeBase]);
   } else if (source.startsWith('commit:')) {
     const sha = source.slice('commit:'.length);
@@ -288,6 +320,8 @@ export async function computeDiff(root: string, source: string): Promise<DiffRes
     }
     diffText = await git(root, ['diff', ...flags, parent, sha]);
     side = { ref: sha };
+    refs.left = parent === EMPTY_TREE ? null : parent;
+    refs.right = sha;
     withUntracked = false;
   } else {
     throw new Error(`Unknown diff source: ${source}`);
@@ -295,6 +329,16 @@ export async function computeDiff(root: string, source: string): Promise<DiffRes
 
   const files: FileChange[] = [];
   const deleted: string[] = [];
+  // Moving a commit's or the index's line numbers to the file on disk needs one more diff, taken once for all files.
+  let carries: Map<string, FileDiff> | undefined;
+  if (side !== 'worktree') {
+    try {
+      const text = await git(root, side === 'index' ? ['diff', ...flags] : ['diff', ...flags, side.ref]);
+      carries = new Map(parseDiff(text).map((f) => [f.path, f]));
+    } catch {
+      carries = undefined;
+    }
+  }
   for (const file of parseDiff(diffText)) {
     if (file.status === 'deleted') {
       deleted.push(file.path);
@@ -305,14 +349,10 @@ export async function computeDiff(root: string, source: string): Promise<DiffRes
     let ranges = rangesOf(file.hunks);
     let exact = true;
     if (side !== 'worktree') {
-      try {
-        const carryDiff = await git(
-          root,
-          side === 'index'
-            ? ['diff', ...flags, '--', file.path]
-            : ['diff', ...flags, side.ref, '--', file.path]
-        );
-        const carry = parseDiff(carryDiff).find((f) => f.path === file.path);
+      if (!carries) {
+        exact = false;
+      } else {
+        const carry = carries.get(file.path);
         if (carry && carry.status !== 'deleted') {
           ranges = ranges.map((r) => {
             const a = mapLine(carry.hunks, r.start);
@@ -321,17 +361,21 @@ export async function computeDiff(root: string, source: string): Promise<DiffRes
             return { start: a.line, end: Math.max(a.line, b.line), pureAdd: r.pureAdd };
           });
         }
-      } catch {
-        exact = false;
       }
     }
-    files.push({ path: file.path, status: file.status === 'added' ? 'added' : 'modified', ranges, exact });
+    files.push({
+      path: file.path,
+      status: file.status === 'added' ? 'added' : 'modified',
+      ranges,
+      exact,
+      hunks: file.hunks,
+    });
   }
   if (withUntracked) {
     const seen = new Set(files.map((f) => f.path));
     for (const f of await untrackedFiles(root)) if (!seen.has(f.path)) files.push(f);
   }
-  return { title, files, deleted };
+  return { title, files, deleted, refs };
 }
 
 export async function getGitStatusSummary(root: string): Promise<GitStatusSummary> {
