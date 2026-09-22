@@ -46,6 +46,21 @@ describe('Feature: Signature changes', () => {
     const rs1 = parseGenericCallable('pub fn handle(&self, id: u32) -> bool {', 'handle', 'rust')!;
     const rs2 = parseGenericCallable('pub fn handle(&self, id: u32, force: bool) -> bool {', 'handle', 'rust')!;
     assert.strictEqual(compareCallables(rs1, rs2)!.change, 'breaking');
+
+    // Java
+    const j1 = parseGenericCallable('public int sum(int a, int b) {', 'sum', 'java')!;
+    const j2 = parseGenericCallable('public int sum(int a, int b, int c = 0) {', 'sum', 'java')!;
+    assert.strictEqual(compareCallables(j1, j2)!.change, 'compatible');
+
+    // Dart
+    const d1 = parseGenericCallable('Future<User> fetch(String id) async {', 'fetch', 'dart')!;
+    const d2 = parseGenericCallable('Future<User> fetch(String id, {bool cache = true}) async {', 'fetch', 'dart')!;
+    assert.strictEqual(compareCallables(d1, d2)!.change, 'compatible');
+
+    // Swift
+    const sw1 = parseGenericCallable('func run(timeout: Int) -> Bool {', 'run', 'swift')!;
+    const sw2 = parseGenericCallable('func run(timeout: Int, retries: Int = 3) -> Bool {', 'run', 'swift')!;
+    assert.strictEqual(compareCallables(sw1, sw2)!.change, 'compatible');
   });
 });
 
@@ -67,10 +82,21 @@ describe('Feature: Declared names', () => {
     assert.deepStrictEqual(declaredNames(text, 'a.ts').sort(), ['build', 'load', 'save']);
   });
 
-  it('finds Python, Go and Rust declarations', () => {
-    assert.deepStrictEqual(declaredNames('def a():\n    pass\nasync def b(x):\n    pass', 'x.py'), ['a', 'b']);
-    assert.deepStrictEqual(declaredNames('func Run() {}\nfunc (s *S) Stop() {}', 'x.go'), ['Run', 'Stop']);
-    assert.deepStrictEqual(declaredNames('pub fn one() {}\nfn two() {}', 'x.rs'), ['one', 'two']);
+  it('finds declarations across all 15 supported languages', () => {
+    assert.deepStrictEqual(declaredNames('def a():\n    pass\nasync def b(x):\n    pass', 'x.py').sort(), ['a', 'b']);
+    assert.deepStrictEqual(declaredNames('func Run() {}\nfunc (s *S) Stop() {}', 'x.go').sort(), ['Run', 'Stop']);
+    assert.deepStrictEqual(declaredNames('pub fn one() {}\nfn two() {}', 'x.rs').sort(), ['one', 'two']);
+    assert.deepStrictEqual(declaredNames('public int calc(int a) {\n}\nvoid run() {\n}', 'App.java').sort(), ['calc', 'run']);
+    assert.deepStrictEqual(declaredNames('public async Task<User> FindAsync(string id) {\n}\nint Count() => 0;', 'Service.cs').sort(), ['Count', 'FindAsync']);
+    assert.deepStrictEqual(declaredNames('int process_data(int len) {\n}\nvoid init();', 'module.cpp').sort(), ['init', 'process_data']);
+    assert.deepStrictEqual(declaredNames('function handleRequest($req) {\n}\npublic function close() {}', 'handler.php').sort(), ['close', 'handleRequest']);
+    assert.deepStrictEqual(declaredNames('fun start() {\n}\nsuspend fun loadData(id: String) = id', 'Main.kt').sort(), ['loadData', 'start']);
+    assert.deepStrictEqual(declaredNames('Future<void> init() async {}\nvoid render() {}', 'main.dart').sort(), ['init', 'render']);
+    assert.deepStrictEqual(declaredNames('def save\nend\ndef self.find(id)\nend', 'model.rb').sort(), ['find', 'save']);
+    assert.deepStrictEqual(declaredNames('func perform() {}\nstatic func create() -> App {}', 'view.swift').sort(), ['create', 'perform']);
+    assert.deepStrictEqual(declaredNames('def calculate(x: Int): Int = x\ndef reset(): Unit = ()', 'app.scala').sort(), ['calculate', 'reset']);
+    assert.deepStrictEqual(declaredNames('pub fn alloc() void {}\nfn free() void {}', 'mem.zig').sort(), ['alloc', 'free']);
+    assert.deepStrictEqual(declaredNames('function init()\nend\nlocal function setup()\nend', 'script.lua').sort(), ['init', 'setup']);
   });
 });
 

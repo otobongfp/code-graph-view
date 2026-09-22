@@ -68,8 +68,8 @@ function makeDiffTarget(source: string, hintTarget?: Target): Target {
 
 const MAX_HISTORY = 50;
 const EXPLORE_DEPTH = 10;
-const SOURCE_GLOB = '**/*.{ts,tsx,js,jsx,mjs,cjs,go,rs,py}';
-const SOURCE_EXCLUDE = '**/{node_modules,dist,out,build,.git,vendor,target,.venv,venv,site-packages,__pycache__}/**';
+const SOURCE_GLOB = '**/*.{ts,tsx,js,jsx,mjs,cjs,go,rs,py,java,cs,c,cpp,cc,cxx,h,hpp,php,kt,kts,dart,rb,swift,scala,sc,zig,lua}';
+const SOURCE_EXCLUDE = '{**/{node_modules,dist,out,build,.git,vendor,target,.venv,venv,site-packages,__pycache__,.gradle,obj,.dart_tool,.build,.swiftpm,.metals,.bloop}/**,**/bin/{Debug,Release,x86,x64,AnyCPU}/**}';
 const MAX_FILE_RESULTS = 8;
 const MAX_SYMBOL_RESULTS = 12;
 

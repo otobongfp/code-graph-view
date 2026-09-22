@@ -2,6 +2,13 @@
 
 All notable changes to Code Graph View are recorded here.
 
+## [0.0.4]
+
+### Added
+- Expanded multi-language support: added **Java**, **C#**, **C / C++**, **PHP**, and **Kotlin** alongside TypeScript/JavaScript, Go, Rust, and Python.
+- Multi-language signature and type parsing for Java, C#, C/C++, PHP, and Kotlin callables and working-tree diffs.
+- Test detection and dependency filtering for `.gradle`, `build`, `bin`, and `obj` directories.
+
 ## [0.0.3]
 
 ### Added

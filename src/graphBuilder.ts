@@ -12,7 +12,7 @@ const VARIABLE_KINDS = new Set<vscode.SymbolKind>([
 ]);
 
 const TEST_FILE =
-  /(\.(spec|test)\.[cm]?[jt]sx?$)|(_test\.go$)|(test_.*\.py$)|(.*_test\.py$)|(\/__tests__\/)/;
+  /(\.(spec|test)\.[cm]?[jt]sx?$)|(_test\.go$)|(test_.*\.py$)|(.*_test\.py$)|(Test.*\.java$)|(.*Test\.java$)|(.*Tests?\.cs$)|(.*_test\.(cpp|cc|cxx|c)$)|(.*Test\.php$)|(.*Test\.kt$)|(.*_test\.dart$)|(.*_(test|spec)\.rb$)|(test_.*\.rb$)|(.*Tests?\.swift$)|(.*(Spec|Suite|Test)\.scala$)|(.*_test\.zig$)|(.*_(spec|test)\.lua$)|(\/__tests__\/)/i;
 
 const MAX_ROOT_SYMBOLS = 200;
 const MAX_SYMBOLS = 400;
@@ -41,8 +41,8 @@ function baseName(uri: vscode.Uri): string {
   return uri.path.split("/").pop() ?? uri.path;
 }
 
-/** Third-party and generated code: dependencies (node_modules, Go vendor, Python environments) and Rust build output. */
-export const DEPENDENCY_DIRS = /\/(node_modules|vendor|target|\.venv|venv|site-packages|__pycache__)\//;
+/** Third-party and generated code: dependencies (node_modules, Go vendor, Python environments) and build output. */
+export const DEPENDENCY_DIRS = /\/(node_modules|vendor|target|\.venv|venv|site-packages|__pycache__|\.gradle|build|bin\/(?:Debug|Release|x86|x64|AnyCPU)|obj|\.dart_tool|\.build|\.swiftpm|\.metals|\.bloop)\//;
 
 export function isWorkspaceFile(uri: vscode.Uri): boolean {
   if (uri.scheme !== "file" || DEPENDENCY_DIRS.test(uri.path)) {
@@ -497,7 +497,7 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
 
   if (callableAttempts >= 3 && callableResolved === 0) {
     notice =
-      "The language server returned no call information for these methods, so they are shown without relations. Check that the language's extension is installed and running (Go: gopls, Rust: rust-analyzer, Python: Pylance).";
+      "The language server returned no call information for these methods, so they are shown without relations. Check that the language's extension is installed and running (e.g. Java: Red Hat Java, C#: C# Dev Kit, C/C++: clangd, Go: gopls, Rust: rust-analyzer, Python: Pylance, PHP: Intelephense, Kotlin: Kotlin).";
   }
   return snapshot();
 }
@@ -567,9 +567,20 @@ function callableNear(lines: string[], line: number, name: string, filePath?: st
   const mention = new RegExp(`(?<![\\w$])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`);
   let lang: string | undefined;
   if (filePath) {
-    if (/\.py$/.test(filePath)) lang = "python";
-    else if (/\.go$/.test(filePath)) lang = "go";
-    else if (/\.rs$/.test(filePath)) lang = "rust";
+    if (/\.py$/i.test(filePath)) lang = "python";
+    else if (/\.go$/i.test(filePath)) lang = "go";
+    else if (/\.rs$/i.test(filePath)) lang = "rust";
+    else if (/\.java$/i.test(filePath)) lang = "java";
+    else if (/\.cs$/i.test(filePath)) lang = "csharp";
+    else if (/\.(c|cpp|cc|cxx|h|hpp)$/i.test(filePath)) lang = "cpp";
+    else if (/\.php$/i.test(filePath)) lang = "php";
+    else if (/\.(kt|kts)$/i.test(filePath)) lang = "kotlin";
+    else if (/\.dart$/i.test(filePath)) lang = "dart";
+    else if (/\.rb$/i.test(filePath)) lang = "ruby";
+    else if (/\.swift$/i.test(filePath)) lang = "swift";
+    else if (/\.(scala|sc)$/i.test(filePath)) lang = "scala";
+    else if (/\.zig$/i.test(filePath)) lang = "zig";
+    else if (/\.lua$/i.test(filePath)) lang = "lua";
   }
   for (let d = 0; d <= 4; d++) {
     for (const i of d === 0 ? [line] : [line - d, line + d]) {
@@ -584,8 +595,8 @@ function callableNear(lines: string[], line: number, name: string, filePath?: st
 
 /** Changed files whose symbols are looked up at the same time. */
 const DIFF_FILE_CONCURRENCY = 6;
-const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|go|rs|py)$/;
-const SKIPPED_DIRS = /(^|\/)(node_modules|dist|out|build|\.next|vendor|target|\.venv|venv|site-packages|__pycache__)\//;
+const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|go|rs|py|java|cs|c|cpp|cc|cxx|h|hpp|php|kt|kts|dart|rb|swift|scala|sc|zig|lua)$/i;
+const SKIPPED_DIRS = /(^|\/)(node_modules|dist|out|build|\.next|vendor|target|\.venv|venv|site-packages|__pycache__|\.gradle|bin\/(?:Debug|Release|x86|x64|AnyCPU)|obj|\.dart_tool|\.build|\.swiftpm|\.metals|\.bloop)\//;
 
 /** The git repository to read changes from: the one containing the file you're looking at, else the first folder. */
 export async function diffRepoRoot(hintUri?: vscode.Uri): Promise<string> {

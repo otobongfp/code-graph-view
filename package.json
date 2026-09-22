@@ -8,7 +8,7 @@
   },
   "icon": "images/logo.png",
   "description": "Explore code as an interactive call graph: trace callers and callees, see what a git change affects, and curate compact context for AI assistants.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "license": "MIT",
   "keywords": [
     "call graph",
@@ -21,7 +21,20 @@
     "typescript",
     "go",
     "rust",
-    "python"
+    "python",
+    "java",
+    "csharp",
+    "cpp",
+    "c",
+    "php",
+    "kotlin",
+    "dart",
+    "flutter",
+    "ruby",
+    "swift",
+    "scala",
+    "zig",
+    "lua"
   ],
   "engines": {
     "vscode": "^1.85.0"
@@ -95,7 +108,7 @@
         {
           "command": "codeGraphView.open",
           "group": "navigation",
-          "when": "resourceLangId == typescript || resourceLangId == typescriptreact || resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == go || resourceLangId == rust || resourceLangId == python"
+          "when": "resourceLangId == typescript || resourceLangId == typescriptreact || resourceLangId == javascript || resourceLangId == javascriptreact || resourceLangId == go || resourceLangId == rust || resourceLangId == python || resourceLangId == java || resourceLangId == csharp || resourceLangId == c || resourceLangId == cpp || resourceLangId == php || resourceLangId == kotlin || resourceLangId == dart || resourceLangId == ruby || resourceLangId == swift || resourceLangId == scala || resourceLangId == zig || resourceLangId == lua"
         }
       ]
     }

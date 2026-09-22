@@ -285,51 +285,105 @@ export function parseCallable(text: string, name: string): ParsedCallable | unde
 }
 
 /**
- * Language-agnostic parser for callables in Go, Rust, Python and similar languages: parameters between `(…)`
- * and a return type after `->`, `:` or, as in Go, written straight after the parameter list. Pass `name` so a
- * Go receiver `(s *Server)` is not mistaken for the parameters, and `languageId` for language quirks.
+ * Language-agnostic parser for callables in Go, Rust, Python, Java, C#, C/C++, PHP, Kotlin, Dart, Ruby, Swift, Scala, Zig, Lua:
+ * parameters between `(…)` and return types (either trailing via `->`/`:` or preceding the function name).
+ * Pass `name` so receivers/prefixes are handled accurately, and `languageId` for language-specific syntax.
  */
 export function parseGenericCallable(text: string, name?: string, languageId?: string): ParsedCallable | undefined {
   if (!text) return undefined;
+  const lang = (languageId || '').toLowerCase();
   let start = 0;
   if (name) {
-    const at = new RegExp(`(?<![\\w$])${escapeRe(name)}\\s*(?:<[^()]*>)?\\s*\\(`).exec(text);
+    const at = new RegExp(`(?<![\\w$])${escapeRe(name)}\\s*(?:<[^()]*>|\\[[^\\]()]*\\])?\\s*\\(`).exec(text);
     if (at) start = at.index;
   }
   // Rust lifetimes (`&'a str`) look like the start of a string to the bracket scanner, so drop them.
-  const body = languageId === 'rust' ? text.slice(start).replace(/'[A-Za-z_]\w*\s?/g, '') : text.slice(start);
+  const body = lang === 'rust' ? text.slice(start).replace(/'[A-Za-z_]\w*\s?/g, '') : text.slice(start);
   const parenOpen = body.indexOf('(');
   if (parenOpen < 0) return undefined;
   const parenClose = matchClose(body, parenOpen);
   if (parenClose < 0) return undefined;
 
+  const isCStyle = lang === 'java' || lang === 'csharp' || lang === 'cs' || lang === 'c' || lang === 'cpp' || lang === 'cxx' || lang === 'dart';
+  const isPhp = lang === 'php';
+
   const params: ParsedParam[] = [];
   for (const raw of splitTop(body.slice(parenOpen + 1, parenClose))) {
     const p = raw.trim();
     if (!p) continue;
-    let rest = p.startsWith('...') || p.startsWith('*');
-    const clean = rest ? p.replace(/^\.{3}|^\*{1,2}/, '').trim() : p;
+    let isOptional = false;
+    let mainPart = p;
 
-    let mainPart = clean;
+    // Dart named params `{param = val}` or positional optional `[param = val]`
+    if ((mainPart.startsWith('{') && mainPart.endsWith('}')) || (mainPart.startsWith('[') && mainPart.endsWith(']'))) {
+      isOptional = true;
+      mainPart = mainPart.slice(1, -1).trim();
+    }
+
+    let rest = mainPart.startsWith('...') || mainPart.startsWith('*') || /\bparams\s+/.test(mainPart) || mainPart.includes('...');
+    const clean = mainPart.replace(/^\.{3}|^\*{1,2}/, '').replace(/\bparams\s+/, '').trim();
+    mainPart = clean;
+
     let defaultValue: string | undefined;
     const eqIdx = mainPart.indexOf('=');
     if (eqIdx >= 0) {
       defaultValue = mainPart.slice(eqIdx + 1).trim();
       mainPart = mainPart.slice(0, eqIdx).trim();
     }
-    const add = (name: string, type: string | undefined) =>
-      params.push({ name: name || 'param', type: type || undefined, optional: defaultValue !== undefined, rest, defaultValue, decorators: [] });
+    const add = (pName: string, pType: string | undefined) =>
+      params.push({ name: pName || 'param', type: pType || undefined, optional: isOptional || defaultValue !== undefined, rest, defaultValue, decorators: [] });
 
     // Rust receivers: `self`, `&self`, `&mut self`.
     if (/^&?\s*(?:mut\s+)?self\b/.test(mainPart)) {
       add(mainPart, undefined);
       continue;
     }
-    const colonIdx = mainPart.indexOf(':');
-    if (colonIdx >= 0) {
-      add(mainPart.slice(0, colonIdx).trim().replace(/^(mut\s+|&mut\s+|&)/, ''), mainPart.slice(colonIdx + 1).trim());
+
+    // PHP: variables start with `$`
+    if (isPhp || mainPart.includes('$')) {
+      const dollarIdx = mainPart.indexOf('$');
+      if (dollarIdx >= 0) {
+        let pName = mainPart.slice(dollarIdx).trim();
+        if (pName.startsWith('...')) {
+          rest = true;
+          pName = pName.slice(3).trim();
+        }
+        const pType = mainPart.slice(0, dollarIdx).trim() || undefined;
+        add(pName, pType);
+        continue;
+      }
+    }
+
+    // Explicit colon syntax: `name: Type` (Python, Kotlin, TypeScript, Swift, Scala, Zig, etc.)
+    const colonIdx = !isCStyle ? mainPart.indexOf(':') : -1;
+    if (colonIdx >= 0 && mainPart[colonIdx + 1] !== ':') {
+      let pName = mainPart.slice(0, colonIdx).trim().replace(/^(mut\s+|&mut\s+|&)/, '');
+      const pWords = pName.split(/\s+/).filter(Boolean);
+      if (pWords.length > 1) {
+        // Swift argument labels: `for user: User` -> `user`
+        pName = pWords[pWords.length - 1];
+      }
+      add(pName, mainPart.slice(colonIdx + 1).trim());
       continue;
     }
+
+    // Java, C#, C/C++, Dart style: `[modifiers/annotations] Type name`
+    if (isCStyle) {
+      let s = mainPart;
+      if (s.includes('...')) {
+        rest = true;
+        s = s.replace('...', ' ').trim();
+      }
+      const lastSpace = s.lastIndexOf(' ');
+      if (lastSpace >= 0) {
+        let pType = s.slice(0, lastSpace).trim();
+        const pName = s.slice(lastSpace + 1).trim();
+        pType = pType.replace(/@\w+(?:\([^)]*\))?\s*/g, '').trim();
+        add(pName, pType);
+        continue;
+      }
+    }
+
     const words = mainPart.split(/\s+/).filter(Boolean);
     if (words.length >= 2) {
       let type = words.slice(1).join(' ');
@@ -344,7 +398,7 @@ export function parseGenericCallable(text: string, name?: string, languageId?: s
     }
   }
 
-  if (languageId === 'go' && params.length > 0) {
+  if (lang === 'go' && params.length > 0) {
     if (params.every((q) => !q.type)) {
       // Unnamed parameters, as in interface methods: the words are the types.
       params.forEach((q, i) => {
@@ -361,7 +415,7 @@ export function parseGenericCallable(text: string, name?: string, languageId?: s
     }
   }
 
-  // The return type is read from the declaration line only, so a function body can never leak into it.
+  // The return type is read from the declaration line or prefix before method name
   const line = body
     .slice(parenClose + 1)
     .split('\n')[0]
@@ -370,14 +424,35 @@ export function parseGenericCallable(text: string, name?: string, languageId?: s
   const tidy = (t: string) =>
     t
       .replace(/\s+where\b.*$/, '')
+      .replace(/\s*=\s*\{?.*$/, '')
       .replace(/\s\{.*$/, '')
-      .replace(/[{;]\s*$/, '')
+      .replace(/[{;=]\s*$/, '')
       .replace(/:\s*$/, '')
+      .replace(/\b(async\*?|sync\*?)\b/g, '')
       .trim() || undefined;
+
   let returnType: string | undefined;
   if (line.startsWith('->')) returnType = tidy(line.slice(2));
   else if (line.startsWith(':')) returnType = tidy(line.slice(1));
-  else if (line && !line.startsWith('{') && !line.startsWith(';')) returnType = tidy(line);
+  else if (line && !line.startsWith('{') && !line.startsWith(';') && !line.startsWith('=') && !/^(async\*?|sync\*?)\b/.test(line)) {
+    returnType = tidy(line);
+  }
+
+  // If return type is preceding the function name (Java, C#, C/C++, Dart)
+  if (!returnType && start > 0 && isCStyle) {
+    const pre = text.slice(0, start).trim();
+    const preLines = pre.split('\n');
+    const lastLine = preLines[preLines.length - 1].trim();
+    const stripped = lastLine
+      .replace(/@\w+(?:\([^)]*\))?\s*/g, '')
+      .replace(/\[[^\]]+\]\s*/g, '')
+      .replace(/\b(public|protected|private|internal|static|final|abstract|synchronized|native|default|strictfp|async|override|virtual|sealed|partial|extern|unsafe|readonly|inline|constexpr|consteval|explicit|friend|late|const)\b/g, '')
+      .trim();
+    if (stripped) {
+      returnType = stripped.replace(/^<[^>]+>\s*/, '').trim() || undefined;
+    }
+  }
+
   return { params, returnType };
 }
 
@@ -422,6 +497,10 @@ const BUILTIN_TYPES = new Set([
   'Iterator', 'AsyncIterable', 'PromiseLike', 'Generator', 'AsyncGenerator', 'T', 'K', 'V', 'U', 'R',
   'Vec', 'Option', 'Result', 'Box', 'Rc', 'Arc', 'Cell', 'RefCell', 'HashMap', 'HashSet', 'BTreeMap', 'BTreeSet', 'Self', 'Some', 'None', 'Ok', 'Err',
   'Optional', 'List', 'Dict', 'Tuple', 'Any', 'Union', 'Callable', 'Sequence', 'Mapping', 'Iterable', 'Type', 'True', 'False', 'None',
+  'Task', 'ValueTask', 'IEnumerable', 'IList', 'IDictionary', 'ICollection', 'Nullable', 'Action', 'Func',
+  'Integer', 'Double', 'Float', 'Long', 'Short', 'Byte', 'Character', 'Class', 'Void',
+  'std', 'vector', 'string', 'unique_ptr', 'shared_ptr',
+  'Future', 'Stream', 'Widget', 'BuildContext', 'State', 'Int', 'Bool', 'Dictionary', 'Nil', 'Table', 'Unit',
 ]);
 
 /** Type names worth looking up (user-defined-looking identifiers), in first-seen order, with where each first appears. */

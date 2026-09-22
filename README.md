@@ -8,7 +8,7 @@
 
 [![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode)](https://marketplace.visualstudio.com/)
 [![Zero Indexers](https://img.shields.io/badge/Zero%20Config-No%20Background%20Daemons-success)](#how-it-works)
-[![Supports Multi-Language](https://img.shields.io/badge/Languages-TypeScript%20%7C%20JavaScript%20%7C%20Go%20%7C%20Rust%20%7C%20Python-blue)](#how-it-works)
+[![Supports 15 Languages](https://img.shields.io/badge/Languages-15%20Languages%20Supported-blue)](#how-it-works)
 
 ---
 
@@ -32,7 +32,7 @@ Understanding non-trivial codebases by jumping through dozens of open editor tab
 
 ## Quick Start
 
-1. **Open any code file** in a supported language (`.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`).
+1. **Open any code file** in a supported language (`.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`, `.java`, `.cs`, `.c`, `.cpp`, `.h`, `.hpp`, `.php`, `.kt`, `.dart`, `.rb`, `.swift`, `.scala`, `.zig`, `.lua`).
 2. **Click the Code Graph icon** in the **top-right action bar of the file editor** (look for the hierarchy/nodes icon next to the Split Editor button). Hovering over it displays **`Code Graph: Open Graph for Active File`**.
 3. *Alternatively*, press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>) and type **`Code Graph: Open Graph for Active File`**.
 
@@ -50,7 +50,7 @@ Understanding non-trivial codebases by jumping through dozens of open editor tab
 AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Instead of pasting thousands of lines of raw source files or waiting for the model to guess the call chain:
 - **Curate Execution Paths**: Click `+` on individual methods or click `+ Add Trace` to capture an entire multi-hop path.
 - **Granular Detail Control**: Toggle each method between **Name**, **Sig** (inputs, return types, and decorators), or **Full** (complete implementation body).
-- **Deduplicated Schemas**: Automatically extracts referenced TypeScript interfaces and data models once, eliminating redundant token usage.
+- **Deduplicated Schemas**: Automatically extracts referenced project types and data models once, eliminating redundant token usage.
 - **Secrets masked**: Common credentials (API keys, tokens, private keys, passwords in URLs, quoted values on fields like `password` or `apiKey`) are replaced with `[REDACTED]` before you copy or send. On by default; see `codeGraphView.redactSecrets`.
 - **Session-only**: The context lives in memory and is cleared when the workspace closes.
 - **Send to chat**: Opens **VS Code Chat (Copilot)** pre-filled with the context. For **Cursor, Continue, Cline, Cody and Claude Code** the context is copied to your clipboard and, where the extension exposes a command, its chat panel is opened; paste to send. You can also copy prompt-ready markdown with one click.
@@ -58,7 +58,7 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 
 ### 3. Git Impact & Blast Radius Analysis
 - **Inspect Live Changes**: Filter the graph to show only methods touched by uncommitted edits, staged changes, PR branches (`HEAD vs main`), or recent commits. Clicking a changed method opens VS Code's before/after diff at that method.
-- **Review a Change**: In the changes view a strip above the graph summarises the risk: changed methods, callers this change did not update, signature changes (TypeScript/JavaScript, working-tree diffs), modified methods with no test found reaching them, and removed methods something still seems to call. A red or orange bar marks the risky methods, **⚠ risky** filters to them, and the ‹ › stepper walks the changes riskiest first.
+- **Review a Change**: In the changes view a strip above the graph summarises the risk: changed methods, callers this change did not update, signature changes (working-tree diffs), modified methods with no test found reaching them, and removed methods something still seems to call. A red or orange bar marks the risky methods, **⚠ risky** filters to them, and the ‹ › stepper walks the changes riskiest first.
 - **Review a Pull Request**: Run *Code Graph: Review a Pull Request* with a number or link. It checks the branch out (using the GitHub CLI when installed, otherwise GitHub's pull ref) and compares it with the PR's base.
 - **Color-Coded Status**: Amber indicators mark modified methods; green indicators mark newly added symbols.
 - **Callers Impact**: Immediately identify all upstream callers that could break from your modifications.
@@ -95,16 +95,33 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 
 - **Native Language Server Protocol**: Leverages VS Code's built-in LSP (Call Hierarchy, Document Symbols, Definitions, and Hover). No background daemons, external databases, or heavy local indexing required.
 - **Deterministic Layout Engine**: Powered by ELK with persistent coordinate caching. The graph remains stable and predictable as you expand nodes.
-- **Signature extraction**: `tsSignature.ts` is a small hand-written parser (TypeScript/JavaScript, plus a generic one for Go, Rust and Python) that reads parameters, generic bounds (`<T, R extends Base>`) and return types from the source, and fills in inferred types and doc comments from the language server's hover.
+- **Signature extraction**: `tsSignature.ts` is a lightweight parser supporting 15 languages that reads parameters, generic bounds, and return types from the source, filling in inferred types and doc comments from the language server's hover.
 - **High-Performance SVG**: Custom SVG rendering pipeline with smooth pan, pinch-to-zoom, and responsive interaction.
 
 ---
 
 ## Requirements
 
-The graph is built from your language server's **call hierarchy**, so each language needs an extension that provides it: TypeScript/JavaScript (built in), Go (gopls, via the Go extension), Rust (rust-analyzer) and Python (Pylance). The git changes view needs `git` on your PATH and a trusted workspace.
+The graph is built from your language server's **call hierarchy**, so each language needs an extension that provides it:
+- **TypeScript / JavaScript**: Built-in to VS Code
+- **Java**: Language Support for Java (Red Hat)
+- **C#**: C# Dev Kit / C# (OmniSharp/Roslyn)
+- **C / C++**: `clangd` or Microsoft C/C++ (`cpptools`)
+- **Python**: Python / Pylance
+- **Go**: Go (`gopls`)
+- **Rust**: `rust-analyzer`
+- **PHP**: PHP Intelephense / PHP Language Server
+- **Kotlin**: Kotlin Language Server
+- **Dart / Flutter**: `Dart-Code`
+- **Ruby**: `Ruby LSP` / `Solargraph`
+- **Swift**: `SourceKit-LSP` / `Swift` extension
+- **Scala**: `Metals`
+- **Zig**: `ZLS`
+- **Lua**: `Lua Language Server` (sumneko)
 
-**What the review numbers mean.** Callers come from the call hierarchy, so calls through interfaces, callbacks, events, dependency injection or reflection are not seen: treat the counts as a minimum. "No test found" means no test-named file (`*.test.*`, `*.spec.*`, `__tests__`, `_test.go`, `test_*.py`) was found among the calls that reach a method, not that none exists. "Removed, still referenced" is a text search by name, so check each hit.
+The git changes view needs `git` on your PATH and a trusted workspace.
+
+**What the review numbers mean.** Callers come from the call hierarchy, so calls through interfaces, callbacks, events, dependency injection or reflection are not seen: treat the counts as a minimum. "No test found" means no test-named file (`*.test.*`, `*.spec.*`, `__tests__`, `_test.go`, `test_*.py`, `*Test.java`, `*Tests.cs`, `*Test.kt`, `*Test.php`, `*_test.cpp`, `*_test.dart`, `*_test.rb`, `*Test.swift`) was found among the calls that reach a method, not that none exists. "Removed, still referenced" is a text search by name, so check each hit.
 
 ---
 
