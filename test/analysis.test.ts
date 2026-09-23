@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import { declaredNames } from '../src/declarations';
+import { CODE_FILE, dominantLanguage, getLanguageExtensionInfo } from '../src/languageExtensions';
 import { parsePullRequestRef } from '../src/pullRequest';
 import { compareCallables } from '../src/signatureDiff';
 import { parseCallable } from '../src/tsSignature';
@@ -108,5 +109,27 @@ describe('Feature: Pull request references', () => {
     assert.strictEqual(parsePullRequestRef('https://github.com/o/r/pull/678/files'), 678);
     assert.strictEqual(parsePullRequestRef('main'), undefined);
     assert.strictEqual(parsePullRequestRef('12; rm -rf'), undefined);
+  });
+});
+
+describe('Feature: Language Extension Mapping', () => {
+  it('maps source files to a friendly language name and a marketplace tag search', () => {
+    assert.deepStrictEqual(getLanguageExtensionInfo('server.go'), { languageName: 'Go', query: 'tag:go' });
+    assert.deepStrictEqual(getLanguageExtensionInfo('/src/lib.RS'), { languageName: 'Rust', query: 'tag:rust' });
+    assert.deepStrictEqual(getLanguageExtensionInfo('calc.hpp'), { languageName: 'C/C++', query: 'tag:c' });
+    assert.deepStrictEqual(getLanguageExtensionInfo('build.gradle.kts'), { languageName: 'Kotlin', query: 'tag:kotlin' });
+    assert.strictEqual(getLanguageExtensionInfo('index.ts'), undefined);
+    assert.strictEqual(getLanguageExtensionInfo('unknown.xyz'), undefined);
+    assert.strictEqual(getLanguageExtensionInfo('Makefile'), undefined);
+  });
+
+  it('recognises every mapped language, plus TypeScript and JavaScript, as source', () => {
+    for (const file of ['a.ts', 'a.mjs', 'a.go', 'a.cc', 'a.lua', 'a.sc']) assert.ok(CODE_FILE.test(file), file);
+    assert.ok(!CODE_FILE.test('README.md'));
+  });
+
+  it('names the language most files in a change are written in', () => {
+    assert.strictEqual(dominantLanguage(['a.go', 'b.go', 'c.py', 'd.ts'])?.languageName, 'Go');
+    assert.strictEqual(dominantLanguage(['a.ts', 'README.md']), undefined);
   });
 });

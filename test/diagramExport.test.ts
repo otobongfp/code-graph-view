@@ -100,7 +100,8 @@ describe('Feature: Diagram Export Engine', () => {
       assert.match(svg, /\.cg-bg \{ fill: #1e1e1e; \}/);
       assert.match(svg, /\.rowbg \{ fill: transparent; \}/);
       assert.match(svg, /<g id="cg-content">/);
-      assert.match(svg, /<marker id="arrow">/);
+      assert.match(svg, /<marker id="arrow"/);
+      assert.match(svg, /\.edge \.line \{[^}]*marker-end: url\(#arrow\)/, 'plain edges keep their direction arrow');
     });
 
     it('wraps inner SVG elements with light theme styling', () => {
@@ -119,6 +120,49 @@ describe('Feature: Diagram Export Engine', () => {
       const svg = packageStandaloneSvg(innerSvg, bounds, { theme: 'transparent' });
 
       assert.ok(!svg.includes('class="cg-bg"'));
+    });
+
+    it('drops the redundant inline style when an element already carries a transform attribute, instead of emitting a duplicate transform (which would be invalid XML and break PNG rasterization)', () => {
+      const innerSvg =
+        '<g class="card" data-file="src/a.ts" transform="translate(10,20)" style="transform:translate(10px,20px)" filter="url(#cardShadow)"><rect/></g>';
+      const bounds = { x: 0, y: 0, w: 200, h: 150 };
+      const svg = packageStandaloneSvg(innerSvg, bounds, { theme: 'dark' });
+
+      const cardTag = svg.match(/<g class="card"[^>]*>/)?.[0] ?? '';
+      assert.equal((cardTag.match(/transform="/g) ?? []).length, 1, `expected exactly one transform attribute, got: ${cardTag}`);
+      assert.match(cardTag, /transform="translate\(10,20\)"/);
+      assert.ok(!cardTag.includes('style='));
+    });
+
+    it('still converts a style-only transform to an attribute when no transform attribute is already present', () => {
+      const innerSvg = '<g class="elabel" style="transform:translate(5px,7px)"><rect/></g>';
+      const bounds = { x: 0, y: 0, w: 100, h: 80 };
+      const svg = packageStandaloneSvg(innerSvg, bounds, { theme: 'dark' });
+
+      assert.match(svg, /<g class="elabel" transform="translate\(5,7\)">/);
+    });
+
+    it('strips nested defs from inner SVG so there are no duplicate IDs or definitions', () => {
+      const innerSvg =
+        '<defs><marker id="arrow" viewBox="0 0 10 10"><path fill="var(--vscode-charts-blue,#3794ff)"/></marker></defs><g id="world"><g class="card"></g></g>';
+      const bounds = { x: 0, y: 0, w: 100, h: 80 };
+      const svg = packageStandaloneSvg(innerSvg, bounds, { theme: 'dark' });
+
+      const defsMatches = svg.match(/<defs>/g) ?? [];
+      assert.equal(defsMatches.length, 1, 'Expected exactly one root <defs> block');
+      assert.ok(!svg.includes('var(--vscode-'));
+    });
+
+    it('resolves all var(--vscode-*) and var(--*) CSS variables into concrete color values', () => {
+      const innerSvg =
+        '<circle fill="var(--vscode-charts-green,#89d185)"/><rect fill="var(--vscode-button-background,#0e639c)"/><rect stroke="var(--custom-fallback,#123456)"/>';
+      const bounds = { x: 0, y: 0, w: 100, h: 80 };
+      const svg = packageStandaloneSvg(innerSvg, bounds, { theme: 'dark' });
+
+      assert.ok(!svg.includes('var('), `Found unreplaced var(...) in SVG: ${svg}`);
+      assert.match(svg, /fill="#89d185"/);
+      assert.match(svg, /fill="#0e639c"/);
+      assert.match(svg, /stroke="#123456"/);
     });
   });
 });

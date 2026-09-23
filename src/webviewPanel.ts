@@ -262,6 +262,14 @@ export class CodeGraphPanel {
           case 'exportDiagram':
             void this.handleExportDiagram(message.format, message.action, message.data, message.filename);
             break;
+          case 'exportDiagramError':
+            vscode.window.showErrorMessage(
+              `Code Graph: could not render the diagram as a ${message.format.toUpperCase()} image. Try "Save SVG File" or "Copy SVG Code" instead.`
+            );
+            break;
+          case 'searchExtension':
+            void vscode.commands.executeCommand('workbench.extensions.search', message.query);
+            break;
         }
       },
       null,

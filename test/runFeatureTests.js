@@ -17,6 +17,7 @@ async function runFeatureTests() {
     entryPoints: testFiles,
     bundle: true,
     platform: 'node',
+    external: ['vscode'],
     write: false,
     outdir: 'out',
   });

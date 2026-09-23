@@ -56,7 +56,7 @@ export interface SigParam {
   optional: boolean;
   rest: boolean;
   defaultValue?: string;
-  decorators: string[];
+  decorators?: string[];
   doc?: string;
   /** The type was worked out by the language server rather than written in the source. */
   inferred?: boolean;
@@ -108,6 +108,14 @@ export interface GraphData {
   diff?: DiffInfo;
   /** Something the user should know about how complete this graph is, such as a language server without call hierarchy. */
   notice?: string;
+  /** A button beside the notice that searches the marketplace for the missing language extension. */
+  noticeAction?: NoticeAction;
+}
+
+export interface NoticeAction {
+  label: string;
+  /** Extensions view search, e.g. `tag:go`. */
+  query: string;
 }
 
 export interface OpenFileMessage {
@@ -319,6 +327,16 @@ export interface ExportDiagramMessage {
   filename?: string;
 }
 
+export interface ExportDiagramErrorMessage {
+  command: 'exportDiagramError';
+  format: ExportFormat;
+}
+
+export interface SearchExtensionMessage {
+  command: 'searchExtension';
+  query: string;
+}
+
 export type WebviewToExtensionMessage =
   | OpenFileMessage
   | RequestRefreshMessage
@@ -338,7 +356,9 @@ export type WebviewToExtensionMessage =
   | ClearBucketMessage
   | CopyBucketMessage
   | SendBucketToChatMessage
-  | ExportDiagramMessage;
+  | ExportDiagramMessage
+  | ExportDiagramErrorMessage
+  | SearchExtensionMessage;
 
 export type ExtensionToWebviewMessage =
   | SignatureResultMessage

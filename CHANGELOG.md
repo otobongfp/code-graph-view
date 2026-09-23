@@ -2,6 +2,18 @@
 
 All notable changes to Code Graph View are recorded here.
 
+## [0.1.2]
+
+### Added
+- When a language has no language server answering (no call hierarchy, or no symbols at all in a file with code), the notice now names the language and offers a "Find <Language> Extensions" button that opens the Extensions view with a marketplace search that works on both the VS Code Marketplace and Open VSX.
+
+### Fixed
+- Fixed PNG export and copy silently falling back to SVG: the standalone SVG packager emitted duplicate `transform` attributes and duplicate `<defs>` IDs, which violated XML well-formedness rules and caused the browser image decoder to fail during rasterization.
+- Reconciled CSS transforms and attributes in `packageStandaloneSvg` so all elements emit standard SVG XML attributes without duplicates.
+- Resolved all `var(--vscode-*)` and `var(--*)` CSS custom properties to concrete color values with automatic light/dark theme adaptation.
+- Fixed clipboard PNG copying by passing a Promise directly to `ClipboardItem` to preserve user activation gesture in Chromium, and providing clear status bar feedback if clipboard permissions are restricted in the webview.
+- Dropped the redundant "(2x)" suffix from the "Save PNG Image" menu label.
+
 ## [0.1.1]
 
 ### Fixed

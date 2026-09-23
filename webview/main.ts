@@ -1246,7 +1246,7 @@ async function renderGraph(data: GraphData) {
           </button>
           <div class="cg-menu-divider"></div>
           <button class="cg-menu-item" id="exp-save-png">
-            <span class="cg-menu-label">Save PNG Image (2x)...</span>
+            <span class="cg-menu-label">Save PNG Image...</span>
             <span class="cg-menu-sub">High-resolution raster image</span>
           </button>
           <button class="cg-menu-item" id="exp-copy-png">
@@ -1292,7 +1292,15 @@ async function renderGraph(data: GraphData) {
         data.diff
           ? `<span class="dsum">${escapeXml(data.diff.summary)}</span>${data.diff.approximate ? '<span class="warn" title="The code changed since this commit, so some method positions are estimated.">positions estimated</span>' : ''}${data.diff.other.length ? `<button id="otherbtn" class="otherbtn">Other changes (${data.diff.other.length})</button>` : ''}`
           : ''
-      }<span id="status">${escapeXml(hint)}</span>${data.truncated ? '<span class="warn">Some calls were left out (size limits) — click a method to explore it fully</span>' : ''}${data.notice ? `<span class="warn" title="${escapeAttr(data.notice)}">${escapeXml(data.notice)}</span>` : ''}<span class="perf" title="Time spent asking the language server, and laying the graph out (0 = reused)">fetch ${data.fetchMs} ms · layout ${layoutMs} ms</span></div>
+      }<span id="status">${escapeXml(hint)}</span>${data.truncated ? '<span class="warn">Some calls were left out (size limits) — click a method to explore it fully</span>' : ''}${
+        data.notice
+          ? `<span class="warn" title="${escapeAttr(data.notice)}">${escapeXml(data.notice)}${
+              data.noticeAction
+                ? ` <button class="warn-action-btn" id="find-ext" data-query="${escapeAttr(data.noticeAction.query)}" title="Search marketplace for language extensions">${escapeXml(data.noticeAction.label)} ↗</button>`
+                : ''
+            }</span>`
+          : ''
+      }<span class="perf" title="Time spent asking the language server, and laying the graph out (0 = reused)">fetch ${data.fetchMs} ms · layout ${layoutMs} ms</span></div>
       ${
         data.diff && data.diff.other.length
           ? `<div id="otherlist" hidden>${data.diff.other
@@ -1323,6 +1331,7 @@ async function renderGraph(data: GraphData) {
       }
       <div id="scroll">
         ${files.length === 0 && data.diff ? `<div class="emptydiff">No changed methods in “${escapeXml(data.diff.title)}”.${data.diff.other.length ? '<br>Other changes (imports, config, tests…) are listed under “Other changes”.' : ''}</div>` : ''}
+        ${files.length === 0 && !data.diff && data.notice ? `<div class="emptydiff emptynotice"><div class="emptynotice-text">${escapeXml(data.notice)}</div>${data.noticeAction ? `<button class="otherbtn" id="find-ext-center" data-query="${escapeAttr(data.noticeAction.query)}">${escapeXml(data.noticeAction.label)} ↗</button>` : ''}</div>` : ''}
         <svg id="graph">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
@@ -1954,7 +1963,8 @@ async function renderGraph(data: GraphData) {
   function getCleanExportSvg(): string {
     const graphEl = main.querySelector<SVGSVGElement>('#graph');
     if (!graphEl) return '';
-    return packageStandaloneSvg(graphEl.innerHTML, bounds, { theme: 'dark' });
+    const isLight = document.body.classList.contains('vscode-light');
+    return packageStandaloneSvg(graphEl.innerHTML, bounds, { theme: isLight ? 'light' : 'dark' });
   }
 
   main.querySelector('#exp-mermaid')?.addEventListener('click', () => {
@@ -1995,95 +2005,117 @@ async function renderGraph(data: GraphData) {
     });
   });
 
-  async function triggerPngExport(action: 'save' | 'copy') {
+  function rasterizeSvgToPng(svgContent: string): Promise<{ dataUrl: string; blob: Blob }> {
+    return new Promise((resolve, reject) => {
+      const width = Math.max(200, Math.ceil(bounds.w));
+      const height = Math.max(160, Math.ceil(bounds.h));
+      const scale = 2;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas 2D context not available'));
+        return;
+      }
+
+      const isLight = document.body.classList.contains('vscode-light');
+      ctx.fillStyle = isLight ? '#ffffff' : '#1e1e1e';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        try {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/png');
+          canvas.toBlob((pngBlob) => {
+            if (pngBlob) {
+              resolve({ dataUrl, blob: pngBlob });
+            } else {
+              reject(new Error('Failed to create PNG blob from canvas'));
+            }
+          }, 'image/png');
+        } catch (err) {
+          reject(err);
+        }
+      };
+
+      img.onerror = (err) => {
+        URL.revokeObjectURL(url);
+        reject(err);
+      };
+
+      img.src = url;
+    });
+  }
+
+  main.querySelector('#exp-save-png')?.addEventListener('click', async () => {
     exportMenuEl.hidden = true;
     exportBtn?.classList.remove('on');
     const svgContent = getCleanExportSvg();
     if (!svgContent) return;
 
-    const width = Math.max(200, Math.ceil(bounds.w));
-    const height = Math.max(160, Math.ceil(bounds.h));
-    const scale = 2;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width * scale;
-    canvas.height = height * scale;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.fillStyle = '#1e1e1e';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const cleanName = data.rootLabel ? data.rootLabel.replace(/[^a-zA-Z0-9_-]/g, '_') : 'code-graph';
-
-    const sendPngData = (dataUrl: string) => {
+    try {
+      const { dataUrl } = await rasterizeSvgToPng(svgContent);
+      const cleanName = data.rootLabel ? data.rootLabel.replace(/[^a-zA-Z0-9_-]/g, '_') : 'code-graph';
       vscode.postMessage({
         command: 'exportDiagram',
         format: 'png',
-        action: action,
+        action: 'save',
         data: dataUrl,
         filename: `${cleanName}.png`,
       });
-    };
+    } catch (err) {
+      console.error('Failed to export PNG', err);
+      vscode.postMessage({ command: 'exportDiagramError', format: 'png' });
+    }
+  });
 
-    const img = new Image();
-    const encodedSvg = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
+  main.querySelector('#exp-copy-png')?.addEventListener('click', async () => {
+    exportMenuEl.hidden = true;
+    exportBtn?.classList.remove('on');
+    const svgContent = getCleanExportSvg();
+    if (!svgContent) return;
 
-    img.onload = () => {
+    const pngBlobPromise = rasterizeSvgToPng(svgContent).then((r) => r.blob);
+
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
       try {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/png');
-
-        if (action === 'save') {
-          sendPngData(dataUrl);
-        } else {
-          canvas.toBlob(async (blob) => {
-            if (blob && navigator.clipboard && navigator.clipboard.write) {
-              try {
-                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-                const statusEl = main.querySelector<HTMLElement>('#status');
-                if (statusEl) statusEl.textContent = 'PNG image copied to clipboard';
-                return;
-              } catch {
-                // fallback to postMessage
-              }
-            }
-            sendPngData(dataUrl);
-          }, 'image/png');
-        }
-      } catch (err) {
-        console.error('Error drawing SVG to canvas', err);
-        vscode.postMessage({
-          command: 'exportDiagram',
-          format: 'svg',
-          action: action,
-          data: svgContent,
-          filename: `${cleanName}.svg`,
-        });
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': pngBlobPromise }),
+        ]);
+        const statusEl = main.querySelector<HTMLElement>('#status');
+        if (statusEl) statusEl.textContent = 'PNG image copied to clipboard';
+        return;
+      } catch (clipErr) {
+        console.warn('Direct clipboard write failed', clipErr);
       }
-    };
+    }
 
-    img.onerror = (err) => {
-      console.error('Image load error for rasterizing SVG', err);
-      vscode.postMessage({
-        command: 'exportDiagram',
-        format: 'svg',
-        action: action,
-        data: svgContent,
-        filename: `${cleanName}.svg`,
-      });
-    };
-
-    img.src = encodedSvg;
-  }
-
-  main.querySelector('#exp-save-png')?.addEventListener('click', () => {
-    void triggerPngExport('save');
+    try {
+      await pngBlobPromise;
+      const statusEl = main.querySelector<HTMLElement>('#status');
+      if (statusEl) statusEl.textContent = 'Clipboard permission unavailable. Use "Save PNG Image" to save the file.';
+    } catch {
+      vscode.postMessage({ command: 'exportDiagramError', format: 'png' });
+    }
   });
 
-  main.querySelector('#exp-copy-png')?.addEventListener('click', () => {
-    void triggerPngExport('copy');
-  });
+  const handleSearchExt = (ev: Event) => {
+    ev.stopPropagation();
+    const query = (ev.currentTarget as HTMLElement).getAttribute('data-query');
+    if (query) {
+      vscode.postMessage({ command: 'searchExtension', query });
+    }
+  };
+  main.querySelector('#find-ext')?.addEventListener('click', handleSearchExt);
+  main.querySelector('#find-ext-center')?.addEventListener('click', handleSearchExt);
+
   main.querySelector('#sigbtn')!.addEventListener('click', () => {
     if (dockOpen && activeDockTab === 'sig') {
       closeDock();
@@ -2823,7 +2855,7 @@ function renderSignature(d: SignatureData) {
           (p) => `<div class="sg-param">
             <div class="sg-pline"><span class="sg-pname">${p.rest ? '…' : ''}${escapeXml(p.name)}</span>${
               p.optional ? '<span class="sg-flag" title="You can leave this out when calling">optional</span>' : ''
-            }${p.decorators.map((x) => `<span class="sg-chip deco" title="Where this input comes from">${escapeXml(x)}</span>`).join('')}</div>
+            }${ (p.decorators ?? []).map((x) => `<span class="sg-chip deco" title="Where this input comes from">${escapeXml(x)}</span>`).join('')}</div>
             <div class="sg-ptype">${p.type ? withLinks(p.type) : '<span class="sg-unknown">type not declared</span>'}${
               p.inferred ? '<span class="sg-flag soft" title="Not written in the code; worked out by the language server">inferred</span>' : ''
             }${p.defaultValue ? `<span class="sg-default" title="Used when the caller passes nothing">= ${escapeXml(p.defaultValue)}</span>` : ''}</div>

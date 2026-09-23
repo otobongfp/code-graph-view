@@ -135,25 +135,55 @@ export function packageStandaloneSvg(
   const vx = Math.floor(bounds.x);
   const vy = Math.floor(bounds.y);
 
-  // Sanitize inner content:
-  // 1. Strip pan/zoom transform from <g id="world">
-  let cleanContent = rawSvgContent.replace(
+  // 1. Remove any nested <defs>...</defs> block so we don't have duplicate IDs or unresolved variables
+  let cleanContent = rawSvgContent.replace(/<defs[\s\S]*?<\/defs>/gi, '');
+
+  // 2. Strip pan/zoom transform from <g id="world">
+  cleanContent = cleanContent.replace(
     /<g id="world"[^>]*>/i,
     '<g id="world">'
   );
 
-  // 2. Convert CSS style transforms `style="transform:translate(10px,20px)"` to standard SVG attribute `transform="translate(10,20)"`
-  cleanContent = cleanContent.replace(/style="transform:\s*translate\((-?\d+(?:\.\d+)?)(?:px)?,\s*(-?\d+(?:\.\d+)?)(?:px)?\);?"/gi, 'transform="translate($1,$2)"');
+  // 3. Reconcile CSS transforms with SVG transform attributes.
+  // Elements with style="transform:translate(Xpx,Ypx)" get converted to transform="translate(X,Y)"
+  // if transform attribute is absent, or the redundant style is removed if transform is already present.
+  cleanContent = cleanContent.replace(/<([a-zA-Z][\w:-]*)([^>]*?)(\/?)>/g, (_full, tag, attrs, selfClose) => {
+    let cleanAttrs = attrs;
+    const styleMatch = cleanAttrs.match(/\s*style="([^"]*)"/i);
+    if (styleMatch) {
+      const fullStyleAttr = styleMatch[0];
+      const styleContent = styleMatch[1];
+      const tfMatch = styleContent.match(/transform:\s*translate\((-?\d+(?:\.\d+)?)(?:px)?,\s*(-?\d+(?:\.\d+)?)(?:px)?\);?/i);
+      if (tfMatch) {
+        const [tfProp, x, y] = tfMatch;
+        const remainingStyle = styleContent.replace(tfProp, '').trim().replace(/^;|;$/g, '').trim();
+        cleanAttrs = cleanAttrs.replace(fullStyleAttr, remainingStyle ? ` style="${remainingStyle}"` : '');
+        if (!/(^|\s)transform="/i.test(cleanAttrs)) {
+          cleanAttrs = `${cleanAttrs} transform="translate(${x},${y})"`;
+        }
+      }
+    }
+    const isSelfClosing = selfClose === '/' || cleanAttrs.endsWith('/');
+    if (cleanAttrs.endsWith('/')) {
+      cleanAttrs = cleanAttrs.slice(0, -1);
+    }
+    cleanAttrs = cleanAttrs.trim();
+    return `<${tag}${cleanAttrs ? ' ' + cleanAttrs : ''}${isSelfClosing ? ' /' : ''}>`;
+  });
 
-  // 3. Resolve CSS variables to concrete hex codes
+  // 4. Resolve CSS variables to concrete hex codes
   cleanContent = cleanContent
+    .replace(/var\(--vscode-button-background,[^)]+\)/g, isLight ? '#007acc' : '#0e639c')
+    .replace(/var\(--vscode-button-foreground,[^)]+\)/g, '#ffffff')
+    .replace(/var\(--vscode-charts-green,[^)]+\)/g, isLight ? '#388a34' : '#89d185')
+    .replace(/var\(--vscode-charts-blue,[^)]+\)/g, calleeColor)
+    .replace(/var\(--vscode-charts-orange,[^)]+\)/g, callerColor)
     .replace(/var\(--vscode-editorWidget-background,[^)]+\)/g, cardBg)
     .replace(/var\(--vscode-widget-border,[^)]+\)/g, cardBorder)
     .replace(/var\(--vscode-editor-foreground,[^)]+\)/g, textMain)
     .replace(/var\(--vscode-descriptionForeground,[^)]+\)/g, textSub)
     .replace(/var\(--vscode-editorLineNumber-foreground,[^)]+\)/g, edgeColor)
-    .replace(/var\(--vscode-charts-blue,[^)]+\)/g, calleeColor)
-    .replace(/var\(--vscode-charts-orange,[^)]+\)/g, callerColor);
+    .replace(/var\(--[a-zA-Z0-9_-]+,\s*([^)]+)\)/g, '$1');
 
   const styles = `
     .cg-bg { fill: ${bg}; }
@@ -167,7 +197,10 @@ export function packageStandaloneSvg(
     .tree { fill: none; stroke: ${cardBorder}; stroke-width: 1; }
     .port { fill: ${edgeColor}; }
     .edge .hit { display: none; }
-    .edge .line { fill: none; stroke: ${edgeColor}; stroke-width: 1.4; opacity: .85; }
+    .edge .line { fill: none; stroke: ${edgeColor}; stroke-width: 1.4; opacity: .85; marker-end: url(#arrow); }
+    .edge.on .line { stroke: ${calleeColor}; marker-end: url(#arrow-on); }
+    .edge.focus .line { stroke: ${callerColor}; marker-end: url(#arrow-focus); }
+    .topline { display: none; fill: none; }
     .cardborder { stroke: ${cardBorder}; stroke-width: 1; fill: none; }
     .elabel rect { fill: ${labelBg}; stroke: ${edgeColor}; }
     .elabel text { font-size: 10px; fill: ${textMain}; }
@@ -178,7 +211,7 @@ export function packageStandaloneSvg(
     .activebar { display: none; fill: #e2c541; }
     .row.active .activebar, .sub.active .activebar { display: block; }
     .row.active .rowbg, .sub.active .rowbg { fill: #e2c541; fill-opacity: .3; stroke: #e2c541; stroke-width: 1.5; }
-    .hopchip, .row-add-btn, .sub-add-btn, .pg-btn { display: none; }
+    .hopchip, .row-add-btn, .sub-add-btn, .pg-btn, .pager { display: none; }
   `;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
