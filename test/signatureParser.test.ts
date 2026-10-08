@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { parseCallable, parseGenericCallable, splitHover } from '../src/tsSignature';
+import { parseCallable, parseGenericCallable, splitHover, unwrapReturnType, classifyCallable } from '../src/tsSignature';
 
 describe('Feature: Language Signature Extraction Engine', () => {
   describe('TypeScript & JavaScript Callable Extraction', () => {
@@ -65,6 +65,14 @@ describe('Feature: Language Signature Extraction Engine', () => {
       assert.strictEqual(parsed.params[1].optional, true);
     });
 
+    it('detects Optional[str] in Python as nullable', () => {
+      const pyCode = 'def lookup(key: Optional[str] = None):';
+      const parsed = parseGenericCallable(pyCode, 'lookup', 'python');
+      assert.ok(parsed);
+      assert.strictEqual(parsed.params[0].name, 'key');
+      assert.strictEqual(parsed.params[0].nullable, true);
+    });
+
     it('parses Go struct methods and function parameters', () => {
       const goCode = 'func (s *Server) HandleRequest(ctx context.Context, req *Request) (*Response, error) {';
       const parsed = parseGenericCallable(goCode, 'HandleRequest', 'go');
@@ -81,10 +89,40 @@ describe('Feature: Language Signature Extraction Engine', () => {
       const parsed = parseGenericCallable(rustCode, 'calculate', 'rust');
       assert.ok(parsed);
       assert.strictEqual(parsed.params[0].name, '&self');
+      assert.strictEqual(parsed.params[0].readonly, true);
       assert.strictEqual(parsed.params[1].name, 'input');
       assert.strictEqual(parsed.params[1].type, '&str');
+      assert.strictEqual(parsed.params[1].readonly, true);
       assert.strictEqual(parsed.params[2].name, 'count');
       assert.strictEqual(parsed.params[2].type, 'usize');
+    });
+
+    it('handles mutable vs readonly parameter detection accurately across languages', () => {
+      // Parameter named 'out' is NOT mutable
+      const p1 = parseGenericCallable('fn test(out: i32)', 'test', 'rust');
+      assert.strictEqual(p1?.params[0].name, 'out');
+      assert.strictEqual(p1?.params[0].mutable, undefined);
+
+      // Rust &mut [u8]
+      const p2 = parseGenericCallable('fn fill(buf: &mut [u8])', 'fill', 'rust');
+      assert.strictEqual(p2?.params[0].name, 'buf');
+      assert.strictEqual(p2?.params[0].mutable, true);
+
+      // Swift inout
+      const p3 = parseGenericCallable('func swap(inout a: Int)', 'swap', 'swift');
+      assert.strictEqual(p3?.params[0].name, 'a');
+      assert.strictEqual(p3?.params[0].mutable, true);
+
+      // C# out parameter
+      const p4 = parseGenericCallable('void TryGet(out int value)', 'TryGet', 'csharp');
+      assert.strictEqual(p4?.params[0].name, 'value');
+      assert.strictEqual(p4?.params[0].mutable, true);
+
+      // C++ const reference
+      const p5 = parseGenericCallable('void read(const std::string& key)', 'read', 'cpp');
+      assert.strictEqual(p5?.params[0].name, 'key');
+      assert.strictEqual(p5?.params[0].readonly, true);
+      assert.strictEqual(p5?.params[0].mutable, undefined);
     });
 
     it('parses Java methods with annotations and generic return types', () => {
@@ -225,7 +263,6 @@ describe('Feature: Language Signature Extraction Engine', () => {
   });
 });
 
-
 describe('Feature: Multi-language declarations (parsed with their body present, as in real use)', () => {
   const show = (text: string, name: string, lang: string) => {
     const r = parseGenericCallable(text, name, lang);
@@ -278,4 +315,68 @@ describe('Feature: Multi-language declarations (parsed with their body present, 
     assert.strictEqual(h.signature, 'fn area(&self, scale: f64) -> f64');
     assert.strictEqual(h.description, 'Area of the shape.');
   });
+
+  describe('Feature: Return Type Drill-down & Wrapper Unwrapping', () => {
+    it('unwraps simple Promises, Tasks, Futures and Options', () => {
+      const p = unwrapReturnType('Promise<User>');
+      assert.deepStrictEqual(p, { wrapper: 'Promise', payload: 'User', error: undefined, inner: undefined });
+
+      const opt = unwrapReturnType('Option<string>');
+      assert.deepStrictEqual(opt, { wrapper: 'Option', payload: 'string', error: undefined, inner: undefined });
+    });
+
+    it('unwraps Result types with payload and error paths', () => {
+      const res = unwrapReturnType('Result<User[], ApiError>');
+      assert.deepStrictEqual(res, { wrapper: 'Result', payload: 'User[]', error: 'ApiError', inner: undefined });
+    });
+
+    it('recursively unwraps nested wrappers like Promise<Result<User[], ApiError>>', () => {
+      const nested = unwrapReturnType('Promise<Result<User[], ApiError>>');
+      assert.deepStrictEqual(nested, {
+        wrapper: 'Promise',
+        payload: 'Result<User[], ApiError>',
+        error: undefined,
+        inner: {
+          wrapper: 'Result',
+          payload: 'User[]',
+          error: 'ApiError',
+          inner: undefined,
+        },
+      });
+    });
+
+    it('bails out on top-level union types to avoid misreading unions', () => {
+      const union = unwrapReturnType('Promise<A> | Map<string, B>');
+      assert.strictEqual(union, undefined);
+    });
+
+    it('does not treat collections as effect wrappers', () => {
+      assert.strictEqual(unwrapReturnType('Map<string, User>'), undefined);
+      assert.strictEqual(unwrapReturnType('List<User>'), undefined);
+      assert.strictEqual(unwrapReturnType('Array<string>'), undefined);
+      assert.strictEqual(unwrapReturnType('Vec<u8>'), undefined);
+    });
+  });
+
+  describe('Feature: Callable Query vs Command Classification', () => {
+    it('classifies getters, query verbs, and non-void functions as Query', () => {
+      assert.strictEqual(classifyCallable('getUserById', 'Promise<User>'), 'query');
+      assert.strictEqual(classifyCallable('findActiveSessions', 'Session[]'), 'query');
+      assert.strictEqual(classifyCallable('isValid', 'boolean'), 'query');
+      assert.strictEqual(classifyCallable('calculateTotal', 'number'), 'query');
+      assert.strictEqual(classifyCallable('name', 'string', ['get']), 'query');
+    });
+
+    it('classifies void returns and state-mutating verbs as Command (including camelCase, PascalCase, snake_case)', () => {
+      assert.strictEqual(classifyCallable('deleteUser', 'Promise<void>'), 'command');
+      assert.strictEqual(classifyCallable('updateProfile', 'void'), 'command');
+      assert.strictEqual(classifyCallable('createUser', 'User'), 'command');
+      assert.strictEqual(classifyCallable('CreateUser', 'User'), 'command');
+      assert.strictEqual(classifyCallable('create_user', 'User'), 'command');
+      assert.strictEqual(classifyCallable('save', 'Promise<User>'), 'command');
+      assert.strictEqual(classifyCallable('dispatchAction', 'void'), 'command');
+      assert.strictEqual(classifyCallable('status', 'void', ['set']), 'command');
+    });
+  });
 });
+

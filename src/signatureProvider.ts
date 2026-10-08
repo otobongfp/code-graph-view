@@ -1,7 +1,15 @@
 import * as vscode from 'vscode';
 import { getDocumentSymbols, isWorkspaceFile, symbolAt } from './graphBuilder';
 import { SigParam, SigType, SignatureData } from './types';
-import { parseCallable, parseGenericCallable, parseHeaderPrefix, splitHover, typeNamesIn } from './tsSignature';
+import {
+  classifyCallable,
+  parseCallable,
+  parseGenericCallable,
+  parseHeaderPrefix,
+  splitHover,
+  typeNamesIn,
+  unwrapReturnType,
+} from './tsSignature';
 
 const MAX_TYPES = 8;
 const MAX_TYPE_LINES = 16;
@@ -152,6 +160,9 @@ export async function getSignature(uri: vscode.Uri, position: vscode.Position): 
     }
   }
 
+  const classification = classifyCallable(symbol.name, returnType, prefix.modifiers);
+  const unwrappedReturn = unwrapReturnType(returnType);
+
   return {
     name: symbol.name,
     container: container?.name,
@@ -166,5 +177,7 @@ export async function getSignature(uri: vscode.Uri, position: vscode.Position): 
     params,
     returns,
     types,
+    classification,
+    unwrappedReturn,
   };
 }

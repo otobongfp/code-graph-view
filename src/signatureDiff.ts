@@ -5,6 +5,7 @@ export interface SignatureChange {
   change: 'breaking' | 'compatible';
   before: string;
   after: string;
+  breakdown?: string[];
 }
 
 const squash = (s: string | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
@@ -31,9 +32,44 @@ export function compareCallables(before: ParsedCallable, after: ParsedCallable):
     before.params.length <= after.params.length &&
     before.params.every((p, i) => shape(p) === shape(after.params[i]) && (!isOptional(p) || isOptional(after.params[i]))) &&
     after.params.slice(before.params.length).every(isOptional);
+
+  const breakdown: string[] = [];
+  if (!sameReturn) {
+    breakdown.push(`Return type changed from '${squash(before.returnType) || 'void'}' to '${squash(after.returnType) || 'void'}'`);
+  }
+
+  const minLen = Math.min(before.params.length, after.params.length);
+  for (let i = 0; i < minLen; i++) {
+    const bp = before.params[i];
+    const ap = after.params[i];
+    if (shape(bp) !== shape(ap)) {
+      breakdown.push(`Parameter '${ap.name}' type changed from '${bp.type || 'any'}' to '${ap.type || 'any'}'`);
+    }
+    if (isOptional(bp) && !isOptional(ap)) {
+      breakdown.push(`Parameter '${ap.name}' became required (was optional)`);
+    } else if (!isOptional(bp) && isOptional(ap)) {
+      breakdown.push(`Parameter '${ap.name}' became optional`);
+    }
+  }
+
+  if (before.params.length > after.params.length) {
+    const removedNames = before.params.slice(after.params.length).map((p) => `'${p.name}'`).join(', ');
+    breakdown.push(`Removed parameter(s): ${removedNames}`);
+  } else if (after.params.length > before.params.length) {
+    for (let i = before.params.length; i < after.params.length; i++) {
+      const ap = after.params[i];
+      if (isOptional(ap)) {
+        breakdown.push(`Added optional parameter '${ap.name}'${ap.defaultValue ? ` with default (${ap.defaultValue})` : ''}`);
+      } else {
+        breakdown.push(`Added required parameter '${ap.name}'`);
+      }
+    }
+  }
+
   return {
     change: keeps && sameReturn ? 'compatible' : 'breaking',
     before: formatCallable(before),
     after: formatCallable(after),
+    breakdown: breakdown.length ? breakdown : undefined,
   };
 }

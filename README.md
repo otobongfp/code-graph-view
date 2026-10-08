@@ -16,8 +16,6 @@
 
 ![Code Graph View Interface](images/screenshot.png)
 
----
-
 ## Overview
 
 Understanding non-trivial codebases by jumping through dozens of open editor tabs and running blind text searches is slow and error-prone. When explaining a bug, refactoring a service, or onboarding onto a new repository, developers need to see **how functions connect and pass data**.
@@ -28,15 +26,11 @@ Understanding non-trivial codebases by jumping through dozens of open editor tab
 - **AI Context Curation**: Capture the exact execution path you are inspecting—complete with call hierarchy trees, method signatures, and deduplicated types—and hand it to **GitHub Copilot, Cursor, Claude Code, or ChatGPT** (pre-filled into VS Code Chat, or copied to your clipboard to paste).
 - **Visual Git Blast Radius**: See exactly which symbols and downstream callers are impacted by staged, unstaged, branch, or commit changes before opening a pull request.
 
----
-
 ## Quick Start
 
 1. **Open any code file** in a supported language (`.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`, `.java`, `.cs`, `.c`, `.cpp`, `.h`, `.hpp`, `.php`, `.kt`, `.dart`, `.rb`, `.swift`, `.scala`, `.zig`, `.lua`).
 2. **Click the Code Graph icon** in the **top-right action bar of the file editor** (look for the hierarchy/nodes icon next to the Split Editor button). Hovering over it displays **`Code Graph: Open Graph for Active File`**.
 3. *Alternatively*, press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>) and type **`Code Graph: Open Graph for Active File`**.
-
----
 
 ## Core Capabilities
 
@@ -76,8 +70,6 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 - **Standalone SVG**: Export clean, vector-accurate standalone SVGs with inlined styles and markers for architecture RFCs and documentation.
 - **High-Resolution PNG**: Render 2x Retina canvas bitmaps with one-click Save or Copy to system clipboard.
 
----
-
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -94,16 +86,12 @@ AI assistants like Copilot, Cursor, and Claude Code cannot see your screen. Inst
 | <kbd>Alt</kbd> + <kbd>←</kbd> / <kbd>→</kbd> | Navigate Back / Forward through history |
 | <kbd>Esc</kbd> | Clear selection or exit isolate mode |
 
----
-
 ## Architecture & Design
 
 - **Native Language Server Protocol**: Leverages VS Code's built-in LSP (Call Hierarchy, Document Symbols, Definitions, and Hover). No background daemons, external databases, or heavy local indexing required.
 - **Deterministic Layout Engine**: Powered by ELK with persistent coordinate caching. The graph remains stable and predictable as you expand nodes.
 - **Signature extraction**: `tsSignature.ts` is a lightweight parser supporting 15 languages that reads parameters, generic bounds, and return types from the source, filling in inferred types and doc comments from the language server's hover.
 - **High-Performance SVG**: Custom SVG rendering pipeline with smooth pan, pinch-to-zoom, and responsive interaction.
-
----
 
 ## Requirements
 
@@ -128,8 +116,6 @@ The git changes view needs `git` on your PATH and a trusted workspace.
 
 **What the review numbers mean.** Callers come from the call hierarchy, so calls through interfaces, callbacks, events, dependency injection or reflection are not seen: treat the counts as a minimum. "No test found" means no test-named file (`*.test.*`, `*.spec.*`, `__tests__`, `_test.go`, `test_*.py`, `*Test.java`, `*Tests.cs`, `*Test.kt`, `*Test.php`, `*_test.cpp`, `*_test.dart`, `*_test.rb`, `*Test.swift`) was found among the calls that reach a method, not that none exists. "Removed, still referenced" is a text search by name, so check each hit.
 
----
-
 ## Configuration
 
 Settings can be customized in `settings.json`:
@@ -150,15 +136,10 @@ Settings can be customized in `settings.json`:
 }
 ```
 
----
-
 ## Contributing & Development
 
 For architecture diagrams, local environment setup, build commands, and testing guidelines, see **[DEVELOPMENT.md](DEVELOPMENT.md)**.
 
----
-
 ## License
 
 MIT
-

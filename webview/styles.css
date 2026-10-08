@@ -170,7 +170,10 @@
   #sg-head button { background:var(--vscode-button-secondaryBackground,#3a3d41); color:var(--vscode-button-secondaryForeground,#fff);
     border:none; padding:3px 9px; border-radius:2px; cursor:pointer; font-size:12px; }
   #sg-body { flex:1; overflow:auto; padding:12px 14px 24px; font-size:12.5px; }
-  .sg-kind { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--vscode-descriptionForeground); }
+  .sg-kind { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--vscode-descriptionForeground); display:flex; align-items:center; gap:8px; }
+  .sg-cq-badge { font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px; text-transform:uppercase; letter-spacing:.04em; display:inline-flex; align-items:center; gap:4px; }
+  .sg-cq-badge.query { background:rgba(55,148,255,.15); color:var(--vscode-charts-blue,#3794ff); border:1px solid rgba(55,148,255,.3); }
+  .sg-cq-badge.cmd { background:rgba(235,130,60,.15); color:var(--vscode-charts-orange,#d18616); border:1px solid rgba(235,130,60,.3); }
   .sg-name { font-size:17px; font-weight:700; margin:2px 0 6px; word-break:break-word; }
   .sg-tp { font-weight:400; font-size:13px; color:var(--vscode-textPreformat-foreground,#d7ba7d); font-family:var(--vscode-editor-font-family, monospace); }
   .sg-chips { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:6px; }
@@ -185,19 +188,50 @@
   .sg-h.typ::before { background:var(--vscode-charts-purple,#b180d7); }
   .sg-count { font-weight:400; opacity:.75; }
   .sg-param { padding:7px 10px; margin-bottom:6px; border-radius:5px; background:var(--vscode-editorWidget-background,rgba(128,128,128,.12));
-    border:1px solid var(--vscode-widget-border, rgba(128,128,128,.25)); }
+    border:1px solid var(--vscode-widget-border, rgba(128,128,128,.25)); transition:border-color .15s ease; }
+  .sg-param:hover { border-color:var(--vscode-widget-border, rgba(128,128,128,.4)); }
   .sg-pline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
   .sg-pname { font-weight:700; font-size:13px; }
+  .sg-ret-label { font-size:12px; color:var(--vscode-descriptionForeground); }
   .sg-ptype { margin-top:2px; font-family:var(--vscode-editor-font-family, monospace); font-size:12px; word-break:break-word;
-    color:var(--vscode-textPreformat-foreground,#d7ba7d); }
+    color:var(--vscode-editor-foreground); line-height:1.45; }
   .sg-pdoc { margin-top:4px; color:var(--vscode-descriptionForeground); line-height:1.45; }
-  .sg-flag { font-family:var(--vscode-font-family); font-size:10.5px; padding:0 6px; border-radius:8px; margin-left:6px; border:1px solid var(--vscode-charts-orange,#d18616);
+  .sg-flag { font-family:var(--vscode-font-family); font-size:10.5px; padding:0 6px; border-radius:8px; margin-left:4px; border:1px solid var(--vscode-charts-orange,#d18616);
     color:var(--vscode-charts-orange,#d18616); }
   .sg-flag.soft { border-color:var(--vscode-widget-border, rgba(128,128,128,.5)); color:var(--vscode-descriptionForeground); }
+  .sg-flag.opt { border-color:var(--vscode-charts-blue,#3794ff); color:var(--vscode-charts-blue,#3794ff); }
+  .sg-flag.null { border-color:var(--vscode-charts-yellow,#e2c541); color:var(--vscode-charts-yellow,#e2c541); }
+  .sg-flag.ro { border-color:var(--vscode-charts-green,#89d185); color:var(--vscode-charts-green,#89d185); }
+  .sg-flag.mut { border-color:var(--vscode-charts-red,#f14c4c); color:var(--vscode-charts-red,#f14c4c); }
   .sg-default { margin-left:8px; color:var(--vscode-descriptionForeground); }
   .sg-none, .sg-unknown { color:var(--vscode-descriptionForeground); font-style:italic; }
-  .tlink { color:var(--vscode-textLink-foreground,#3794ff); cursor:pointer; text-decoration:underline dotted; }
-  .tlink:hover { text-decoration:underline; }
+
+  /* Type Syntax Highlighting Tokens */
+  .ty-kw { color:var(--vscode-symbolIcon-keywordForeground,#569cd6); font-weight:600; }
+  .ty-wrap { color:var(--vscode-charts-purple,#b180d7); font-weight:600; }
+  .ty-op { color:var(--vscode-symbolIcon-operatorForeground,#d4d4d4); opacity:.85; }
+  .tlink { color:var(--vscode-textLink-foreground,#3794ff); cursor:pointer; text-decoration:underline dotted; font-weight:600; }
+  .tlink:hover { text-decoration:underline; color:var(--vscode-textLink-activeForeground,#70b7ff); }
+
+  /* Return Type Drill-down */
+  .sg-drilldown { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:6px; padding:4px 8px; background:rgba(128,128,128,.08); border-radius:4px; font-size:11.5px; }
+  .sg-drill-tag { display:inline-flex; align-items:center; gap:4px; padding:1px 6px; border-radius:4px; font-family:var(--vscode-editor-font-family, monospace); }
+  .sg-drill-tag.wrap { background:rgba(180,130,220,.18); color:var(--vscode-charts-purple,#b180d7); }
+  .sg-drill-tag.payload { background:rgba(137,209,133,.18); color:var(--vscode-charts-green,#89d185); }
+  .sg-drill-tag.err { background:rgba(241,76,76,.18); color:var(--vscode-charts-red,#f14c4c); }
+  .sg-drill-tag.inner { background:rgba(55,148,255,.15); color:var(--vscode-charts-blue,#3794ff); }
+  .sg-drill-arrow { color:var(--vscode-descriptionForeground); font-size:10px; }
+
+  /* Inline Type Unfolding */
+  .sg-unfold-btn { background:rgba(128,128,128,.15); border:1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); color:var(--vscode-editor-foreground);
+    padding:1px 6px; border-radius:3px; font-size:10.5px; cursor:pointer; margin-left:6px; display:inline-flex; align-items:center; gap:3px; }
+  .sg-unfold-btn:hover { background:rgba(128,128,128,.28); }
+  .sg-unfold-card { margin-top:6px; border-radius:4px; border:1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); background:var(--vscode-editor-inactiveSelectionBackground, rgba(128,128,128,.12)); overflow:hidden; display:none; }
+  .sg-unfold-card.open { display:block; animation:sgfade .2s ease; }
+  @keyframes sgfade { from { opacity:0; transform:translateY(-3px); } to { opacity:1; transform:translateY(0); } }
+  .sg-unfold-head { display:flex; align-items:center; gap:6px; padding:3px 8px; background:rgba(128,128,128,.14); font-size:11px; }
+  .sg-unfold-card pre { margin:0; padding:6px 8px; font-family:var(--vscode-editor-font-family, monospace); font-size:11.5px; line-height:1.45; overflow:auto; max-height:180px; }
+
   .sg-type { margin-bottom:8px; border-radius:5px; overflow:hidden; border:1px solid var(--vscode-widget-border, rgba(128,128,128,.3)); }
   .sg-type.flash { animation:sgflash 1.2s ease; }
   @keyframes sgflash { 0%, 60% { border-color:var(--vscode-charts-yellow,#e2c541); box-shadow:0 0 0 2px var(--vscode-charts-yellow,#e2c541); } }

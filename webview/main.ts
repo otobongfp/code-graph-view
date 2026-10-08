@@ -14,9 +14,12 @@ import type {
   GraphData,
   SearchResult,
   SignatureData,
+  SigType,
   SymbolRow,
   WebviewToExtensionMessage,
 } from '../src/types';
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 declare function acquireVsCodeApi(): {
   postMessage(message: WebviewToExtensionMessage): void;
@@ -1081,10 +1084,14 @@ async function renderGraph(data: GraphData) {
         const addBtn = isServices
           ? ''
           : `<g class="row-add-btn" data-sym="${escapeAttr(row.id)}" title="Add to AI Context"><rect x="${w - 20}" y="3" width="16" height="16" rx="3" /><text x="${w - 12}" y="${ROW_H / 2 + 3.5}" text-anchor="middle">+</text></g>`;
+        const sigDiff = data.diff?.signatures?.[row.id];
+        const sigText = sigDiff
+          ? `\nSignature ${sigDiff.change === 'breaking' ? 'changed (may break callers)' : 'extended (compatible)'}: ${sigDiff.before} → ${sigDiff.after}${sigDiff.breakdown && sigDiff.breakdown.length ? `\n  • ${sigDiff.breakdown.join('\n  • ')}` : ''}`
+          : '';
         const tip = isServices
           ? tips.get(file.id) ?? row.name
           : change
-            ? `${row.name} — ${change.kind === 'added' ? 'new' : 'modified'}, ${change.lines} line${change.lines === 1 ? '' : 's'} changed (line ${row.line + 1})${risk && risk.notUpdated > 0 ? `\n${risk.notUpdated} caller${risk.notUpdated === 1 ? '' : 's'} not updated, in ${risk.files} file${risk.files === 1 ? '' : 's'}` : ''}${data.diff?.signatures?.[row.id] ? `\nSignature ${data.diff.signatures[row.id].change === 'breaking' ? 'changed (may break callers)' : 'extended (compatible)'}: ${data.diff.signatures[row.id].before} → ${data.diff.signatures[row.id].after}` : ''}${risk && change?.kind === 'modified' ? (risk.tests > 0 ? `\nReached by ${risk.tests} test file${risk.tests === 1 ? '' : 's'}` : '\nNo test found reaching it') : ''}`
+            ? `${row.name} — ${change.kind === 'added' ? 'new' : 'modified'}, ${change.lines} line${change.lines === 1 ? '' : 's'} changed (line ${row.line + 1})${risk && risk.notUpdated > 0 ? `\n${risk.notUpdated} caller${risk.notUpdated === 1 ? '' : 's'} not updated, in ${risk.files} file${risk.files === 1 ? '' : 's'}` : ''}${sigText}${risk && change?.kind === 'modified' ? (risk.tests > 0 ? `\nReached by ${risk.tests} test file${risk.tests === 1 ? '' : 's'}` : '\nNo test found reaching it') : ''}`
             : `${row.name}  (line ${row.line + 1})`;
 
         const mainRow = `<g class="row${isRootRow ? ' isroot' : ''}${change ? ` changed ${change.kind}` : ''}" data-sym="${escapeAttr(row.id)}" transform="translate(0,${geom.top})">
@@ -2833,17 +2840,109 @@ document.getElementById('bk-chat')?.addEventListener('click', (ev) => {
   }, 1500);
 });
 
+function highlightTypeSyntax(text: string, types: SigType[]): string {
+  const typeNames = types.map((t) => t.name);
+  let s = text;
+
+  const tPlaceholders: string[] = [];
+  if (typeNames.length > 0) {
+    const namesRe = new RegExp(`(?<![\\w$.])(${typeNames.map(escapeRe).join('|')})(?![\\w$])`, 'g');
+    s = s.replace(namesRe, (m) => {
+      const idx = tPlaceholders.length;
+      tPlaceholders.push(`<a class="tlink" data-t="${escapeAttr(m)}" title="Jump to where ${escapeAttr(m)} is declared, below">${escapeXml(m)}</a>`);
+      return `\u0001TLINK_${idx}\u0002`;
+    });
+  }
+
+  const kwPlaceholders: string[] = [];
+  const KW = /\b(string|number|boolean|void|any|unknown|never|null|undefined|symbol|bigint|int|float|double|bool|char|byte|long|short|usize|isize|nil|None|self|this|true|false|object|Function|Unit|Array|ReadonlyArray|Record|Dict|Tuple|List|Vec|Set|Map)\b/g;
+  s = s.replace(KW, (m) => {
+    const idx = kwPlaceholders.length;
+    kwPlaceholders.push(`<span class="ty-kw">${escapeXml(m)}</span>`);
+    return `\u0001KW_${idx}\u0002`;
+  });
+
+  const wrapPlaceholders: string[] = [];
+  const WRAP = /\b(Promise|Task|ValueTask|Future|Result|Option|Optional|Nullable|Observable|Stream|Either|Response|ActionResult|AsyncIterable|AsyncIterator|Generator|AsyncGenerator)\b/g;
+  s = s.replace(WRAP, (m) => {
+    const idx = wrapPlaceholders.length;
+    wrapPlaceholders.push(`<span class="ty-wrap">${escapeXml(m)}</span>`);
+    return `\u0001WRAP_${idx}\u0002`;
+  });
+
+  let out = escapeXml(s);
+  out = out.replace(/(\||\&amp;|=&gt;|-&gt;)/g, '<span class="ty-op">$1</span>');
+
+  out = out.replace(/\u0001TLINK_(\d+)\u0002/g, (_, i) => tPlaceholders[Number(i)] ?? '');
+  out = out.replace(/\u0001KW_(\d+)\u0002/g, (_, i) => kwPlaceholders[Number(i)] ?? '');
+  out = out.replace(/\u0001WRAP_(\d+)\u0002/g, (_, i) => wrapPlaceholders[Number(i)] ?? '');
+
+  return out;
+}
+
+function renderInlineUnfold(paramOrReturnName: string, typeStr: string | undefined, types: SigType[]): { btns: string; cards: string } {
+  if (!typeStr || types.length === 0) return { btns: '', cards: '' };
+  const matching = types.filter((t) => new RegExp(`(?<![\\w$.])${escapeRe(t.name)}(?![\\w$])`).test(typeStr));
+  if (matching.length === 0) return { btns: '', cards: '' };
+
+  const btns = matching
+    .map(
+      (t) =>
+        `<button class="sg-unfold-btn" data-target="unfold-${escapeAttr(paramOrReturnName)}-${escapeAttr(t.name)}" title="Inspect ${escapeAttr(t.name)} inline"><span>${escapeXml(t.name)}</span> <span class="sg-arrow">▾</span></button>`
+    )
+    .join('');
+
+  const cards = matching
+    .map(
+      (t) =>
+        `<div class="sg-unfold-card" id="unfold-${escapeAttr(paramOrReturnName)}-${escapeAttr(t.name)}">
+          <div class="sg-unfold-head">
+            <span class="sg-tkind">${escapeXml(t.kind)}</span>
+            <b>${escapeXml(t.name)}</b>
+            <span class="sg-tfile" title="${escapeAttr(t.file)}">${escapeXml(baseName(t.file))}:${t.line + 1}</span>
+            <button class="sg-topen" data-f="${escapeAttr(t.file)}" data-l="${t.line}" title="Open this type in the editor">Open</button>
+          </div>
+          <pre>${escapeXml(t.declaration)}${t.truncated ? '\n…' : ''}</pre>
+        </div>`
+    )
+    .join('');
+
+  return { btns, cards };
+}
+
+function renderDrilldown(u: NonNullable<SignatureData['unwrappedReturn']> | undefined): string {
+  if (!u) return '';
+  const payloadTag = `<span class="sg-drill-tag payload" title="Unwrapped payload value">Payload: <b>${escapeXml(u.payload)}</b></span>`;
+  const errTag = u.error
+    ? `<span class="sg-drill-tag err" title="Error / Failure type">Error: <b>${escapeXml(u.error)}</b></span>`
+    : '';
+  const innerTag = u.inner
+    ? `<span class="sg-drill-tag inner" title="Inner unpacked wrapper">↳ ${escapeXml(u.inner.wrapper)}: <b>${escapeXml(u.inner.payload)}</b></span>`
+    : '';
+
+  return `<div class="sg-drilldown">
+    <span class="sg-drill-tag wrap" title="Async / Container Effect">${escapeXml(u.wrapper)}</span>
+    <span class="sg-drill-arrow">→</span>
+    ${payloadTag}
+    ${errTag}
+    ${innerTag}
+  </div>`;
+}
+
 function renderSignature(d: SignatureData) {
   sigCur = d;
   sgTitle.textContent = d.container ? `${d.container}.${d.name}` : d.name;
   sgTitle.title = `${d.file}:${d.line + 1}`;
-  const names = d.types.map((t) => t.name);
-  const withLinks = (text: string) => {
-    const escaped = escapeXml(text);
-    return names.length
-      ? escaped.replace(new RegExp(`(?<![\\w$.])(${names.join('|')})(?![\\w$])`, 'g'), '<a class="tlink" data-t="$1" title="Jump to where $1 is declared, below">$1</a>')
-      : escaped;
-  };
+
+  const withLinks = (text: string) => highlightTypeSyntax(text, d.types);
+
+  const cqBadge =
+    d.classification === 'query'
+      ? '<span class="sg-cq-badge query" title="Query: reads or computes data without mutating state"><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg>query</span>'
+      : d.classification === 'command'
+        ? '<span class="sg-cq-badge cmd" title="Command: performs state mutation or side-effects"><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor"><path d="M9.5 1.5l-6 7.5h4.5l-1.5 6 6.5-8H8l1.5-5.5z"/></svg>command</span>'
+        : '';
+
   const chips = [
     ...d.decorators.map((x) => `<span class="sg-chip deco" title="A decorator on this method">${escapeXml(x)}</span>`),
     ...d.modifiers.map((m) => `<span class="sg-chip mod">${escapeXml(m)}</span>`),
@@ -2851,24 +2950,42 @@ function renderSignature(d: SignatureData) {
 
   const inputs = d.params.length
     ? d.params
-        .map(
-          (p) => `<div class="sg-param">
-            <div class="sg-pline"><span class="sg-pname">${p.rest ? '…' : ''}${escapeXml(p.name)}</span>${
-              p.optional ? '<span class="sg-flag" title="You can leave this out when calling">optional</span>' : ''
-            }${ (p.decorators ?? []).map((x) => `<span class="sg-chip deco" title="Where this input comes from">${escapeXml(x)}</span>`).join('')}</div>
+        .map((p) => {
+          const unfold = renderInlineUnfold(p.name, p.type, d.types);
+          return `<div class="sg-param">
+            <div class="sg-pline">
+              <span class="sg-pname">${p.rest ? '…' : ''}${escapeXml(p.name)}</span>
+              ${p.optional ? '<span class="sg-flag opt" title="You can leave this out when calling">optional</span>' : ''}
+              ${!p.optional && p.nullable ? '<span class="sg-flag null" title="Can be null or undefined">nullable</span>' : ''}
+              ${p.readonly ? '<span class="sg-flag ro" title="Read-only / immutable parameter">readonly</span>' : ''}
+              ${p.mutable ? '<span class="sg-flag mut" title="Mutable reference / out parameter">mut</span>' : ''}
+              ${(p.decorators ?? []).map((x) => `<span class="sg-chip deco" title="Where this input comes from">${escapeXml(x)}</span>`).join('')}
+              ${unfold.btns}
+            </div>
             <div class="sg-ptype">${p.type ? withLinks(p.type) : '<span class="sg-unknown">type not declared</span>'}${
               p.inferred ? '<span class="sg-flag soft" title="Not written in the code; worked out by the language server">inferred</span>' : ''
             }${p.defaultValue ? `<span class="sg-default" title="Used when the caller passes nothing">= ${escapeXml(p.defaultValue)}</span>` : ''}</div>
             ${p.doc ? `<div class="sg-pdoc">${escapeXml(p.doc)}</div>` : ''}
-          </div>`
-        )
+            ${unfold.cards}
+          </div>`;
+        })
         .join('')
     : '<div class="sg-none">Takes no inputs.</div>';
 
+  const outUnfold = renderInlineUnfold('return', d.returns?.type, d.types);
   const output = d.returns
-    ? `<div class="sg-param"><div class="sg-ptype">${withLinks(d.returns.type)}${
+    ? `<div class="sg-param">
+        <div class="sg-pline">
+          <span class="sg-pname sg-ret-label">Returns</span>
+          ${outUnfold.btns}
+        </div>
+        <div class="sg-ptype">${withLinks(d.returns.type)}${
         d.returns.inferred ? '<span class="sg-flag soft" title="Not written in the code; worked out by the language server">inferred</span>' : ''
-      }</div>${d.returns.doc ? `<div class="sg-pdoc">${escapeXml(d.returns.doc)}</div>` : ''}</div>`
+      }</div>
+        ${d.returns.doc ? `<div class="sg-pdoc">${escapeXml(d.returns.doc)}</div>` : ''}
+        ${renderDrilldown(d.unwrappedReturn)}
+        ${outUnfold.cards}
+      </div>`
     : '<div class="sg-none">No return type could be found.</div>';
 
   const types = d.types.length
@@ -2884,7 +3001,7 @@ function renderSignature(d: SignatureData) {
     : '<div class="sg-none">No types from this project are used here.</div>';
 
   sgBody.innerHTML = `
-    <div class="sg-kind">${escapeXml(d.kind)}${d.container ? ` · in ${escapeXml(d.container)}` : ''}</div>
+    <div class="sg-kind"><span>${escapeXml(d.kind)}${d.container ? ` · in ${escapeXml(d.container)}` : ''}</span>${cqBadge}</div>
     <div class="sg-name">${escapeXml(d.name)}${d.typeParams ? `<span class="sg-tp">${escapeXml(d.typeParams)}</span>` : ''}</div>
     ${chips ? `<div class="sg-chips">${chips}</div>` : ''}
     ${d.description ? `<p class="sg-desc">${escapeXml(d.description)}</p>` : ''}
@@ -2896,9 +3013,23 @@ function renderSignature(d: SignatureData) {
 
 sgBody.addEventListener('click', (ev) => {
   const target = ev.target as Element;
+  const unfoldBtn = target.closest('.sg-unfold-btn');
+  if (unfoldBtn) {
+    const targetId = unfoldBtn.getAttribute('data-target');
+    if (targetId) {
+      const card = document.getElementById(targetId);
+      if (card) {
+        card.classList.toggle('open');
+        const arrow = unfoldBtn.querySelector('.sg-arrow');
+        if (arrow) arrow.textContent = card.classList.contains('open') ? '▴' : '▾';
+      }
+    }
+    return;
+  }
   const link = target.closest('.tlink');
   if (link) {
-    const card = document.getElementById(`sgt-${link.getAttribute('data-t')}`);
+    const tName = link.getAttribute('data-t');
+    const card = document.getElementById(`sgt-${tName}`);
     card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     card?.classList.remove('flash');
     void (card as HTMLElement | null)?.offsetWidth;

@@ -2,6 +2,17 @@
 
 All notable changes to Code Graph View are recorded here.
 
+## [0.2.0]
+
+### Added
+- **Interactive Type Unfolding**: Parameter and return types referencing project schemas now display an inline unfold button `[TypeName ▾]` to inspect interface, struct, and type definitions directly within the parameter row.
+- **Token Syntax Highlighting for Types**: Color-coded keywords, primitives, container wrappers (`Promise`, `Result`, `Option`, `Stream`, `Task`), and operators (`|`, `&`, `=>`, `->`) in signature inspector types.
+- **Return Type Drill-down**: Automatically deconstructs async/container effect types (e.g. `Promise<Result<User[], ApiError>>`) to display unwrapped payloads and error paths separately.
+- **Query vs. Command Classification**: Classifies functions into pure/read-only queries vs state-mutating commands with VS Code Codicon vector icons and theme colors.
+- **Fine-Grained Parameter Flags**: Added visual badges for parameter mutability (`mut`), nullability (`nullable`), immutability (`readonly`), and optionality (`opt`).
+- **Rich Signature Diff Breakdown**: Detailed reason lists in git diffs and hover tooltips for breaking changes vs compatible extensions.
+- **Streamlined Documentation**: Cleaned up horizontal rule dividers across README.md for a sleek presentation.
+
 ## [0.1.2]
 
 ### Added

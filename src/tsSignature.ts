@@ -1,5 +1,7 @@
 /** Reads the inputs and output of a TypeScript/JavaScript callable from source or hover text. No VS Code APIs. */
 
+import type { UnwrappedReturn } from './types';
+
 export interface ParsedParam {
   name: string;
   type?: string;
@@ -8,6 +10,9 @@ export interface ParsedParam {
   defaultValue?: string;
   /** Decorators on the parameter, such as `@Body()` or `@Param('id')`. */
   decorators: string[];
+  readonly?: boolean;
+  nullable?: boolean;
+  mutable?: boolean;
 }
 
 export interface ParsedCallable {
@@ -155,6 +160,7 @@ function parseParam(raw: string): ParsedParam | undefined {
   const { decorators, rest } = parseDecorators(raw);
   let text = rest.trim();
   if (!text) return undefined;
+  const isReadonly = /\breadonly\b/.test(text);
   text = text.replace(/^(?:(?:public|private|protected|readonly|override)\s+)+/, '');
   const restParam = text.startsWith('...');
   if (restParam) text = text.slice(3).trimStart();
@@ -185,7 +191,19 @@ function parseParam(raw: string): ParsedParam | undefined {
   let defaultValue: string | undefined;
   const eq = findTopLevelEquals(text, i);
   if (eq >= 0) defaultValue = collapse(text.slice(eq + 1)) || undefined;
-  return { name, type, optional: optional || defaultValue !== undefined, rest: restParam, defaultValue, decorators };
+
+  const isNullable = optional || (type ? /(?:\?\s*$|\|\s*(?:null|undefined)\b|\b(?:null|undefined)\s*\||\b(?:Option|Optional|Nullable)(?:<|\[))/i.test(type) : false);
+
+  return {
+    name,
+    type,
+    optional: optional || defaultValue !== undefined,
+    rest: restParam,
+    defaultValue,
+    decorators,
+    readonly: isReadonly || undefined,
+    nullable: isNullable || undefined,
+  };
 }
 
 function findTopLevelEquals(text: string, from: number): number {
@@ -284,6 +302,9 @@ export function parseCallable(text: string, name: string): ParsedCallable | unde
   return { typeParams, params, returnType };
 }
 
+const MUT_LEAD_RE = /^(?:mut|inout|ref|out|var)\s+/;
+const RO_LEAD_RE = /^(?:readonly|const|val|in|final)\s+/;
+
 /**
  * Language-agnostic parser for callables in Go, Rust, Python, Java, C#, C/C++, PHP, Kotlin, Dart, Ruby, Swift, Scala, Zig, Lua:
  * parameters between `(…)` and return types (either trailing via `->`/`:` or preceding the function name).
@@ -330,12 +351,36 @@ export function parseGenericCallable(text: string, name?: string, languageId?: s
       defaultValue = mainPart.slice(eqIdx + 1).trim();
       mainPart = mainPart.slice(0, eqIdx).trim();
     }
-    const add = (pName: string, pType: string | undefined) =>
-      params.push({ name: pName || 'param', type: pType || undefined, optional: isOptional || defaultValue !== undefined, rest, defaultValue, decorators: [] });
 
-    // Rust receivers: `self`, `&self`, `&mut self`.
+    const add = (pName: string, pType: string | undefined, mutFlag?: boolean, roFlag?: boolean) => {
+      let isMut = mutFlag;
+      let isRo = roFlag;
+      if (pType) {
+        if (/(?:^|\s)&mut(?:\s|\[|[A-Za-z_]|$)/.test(pType) || /\b(?:mut|&mut|inout)\b/.test(pType)) {
+          isMut = true;
+        } else if (/(?:^|\s)&(?!\s*mut\b)(?:\[|[A-Za-z_])/.test(pType) || /\b(?:readonly|const)\b/.test(pType)) {
+          isRo = true;
+        }
+      }
+      const isNull = isOptional || (pType ? /(?:\?\s*$|\|\s*(?:null|undefined|nil|None)\b|\b(?:null|undefined|nil|None)\s*\||\b(?:Option|Optional|Nullable)(?:<|\[))/i.test(pType) : false);
+      params.push({
+        name: pName || 'param',
+        type: pType || undefined,
+        optional: isOptional || defaultValue !== undefined,
+        rest,
+        defaultValue,
+        decorators: [],
+        readonly: isRo && !isMut ? true : undefined,
+        nullable: isNull || undefined,
+        mutable: isMut || undefined,
+      });
+    };
+
+    // Rust receivers: `self`, `&self`, `&mut self`, `mut self`.
     if (/^&?\s*(?:mut\s+)?self\b/.test(mainPart)) {
-      add(mainPart, undefined);
+      const isMutSelf = /^&?\s*mut\s+self\b/.test(mainPart);
+      const isRoSelf = /^&\s*self\b/.test(mainPart);
+      add(mainPart, undefined, isMutSelf, isRoSelf);
       continue;
     }
 
@@ -354,16 +399,22 @@ export function parseGenericCallable(text: string, name?: string, languageId?: s
       }
     }
 
-    // Explicit colon syntax: `name: Type` (Python, Kotlin, TypeScript, Swift, Scala, Zig, etc.)
+    // Explicit colon syntax: `name: Type` (Python, Kotlin, TypeScript, Swift, Scala, Zig, Rust, etc.)
     const colonIdx = !isCStyle ? mainPart.indexOf(':') : -1;
     if (colonIdx >= 0 && mainPart[colonIdx + 1] !== ':') {
-      let pName = mainPart.slice(0, colonIdx).trim().replace(/^(mut\s+|&mut\s+|&)/, '');
-      const pWords = pName.split(/\s+/).filter(Boolean);
-      if (pWords.length > 1) {
-        // Swift argument labels: `for user: User` -> `user`
-        pName = pWords[pWords.length - 1];
+      let rawName = mainPart.slice(0, colonIdx).trim();
+      let isMut = false;
+      let isRo = false;
+      if (MUT_LEAD_RE.test(rawName)) {
+        isMut = true;
+        rawName = rawName.replace(MUT_LEAD_RE, '').trim();
+      } else if (RO_LEAD_RE.test(rawName)) {
+        isRo = true;
+        rawName = rawName.replace(RO_LEAD_RE, '').trim();
       }
-      add(pName, mainPart.slice(colonIdx + 1).trim());
+      const pWords = rawName.split(/\s+/).filter(Boolean);
+      const pName = pWords.length > 1 ? pWords[pWords.length - 1] : rawName;
+      add(pName, mainPart.slice(colonIdx + 1).trim(), isMut, isRo);
       continue;
     }
 
@@ -379,7 +430,11 @@ export function parseGenericCallable(text: string, name?: string, languageId?: s
         let pType = s.slice(0, lastSpace).trim();
         const pName = s.slice(lastSpace + 1).trim();
         pType = pType.replace(/@\w+(?:\([^)]*\))?\s*/g, '').trim();
-        add(pName, pType);
+        let isMut = false;
+        let isRo = false;
+        if (/\b(?:out|ref|inout)\b/.test(pType)) isMut = true;
+        if (/\b(?:const|readonly|final|in)\b/.test(pType)) isRo = true;
+        add(pName, pType, isMut, isRo);
         continue;
       }
     }
@@ -513,4 +568,84 @@ export function typeNamesIn(text: string): Array<{ name: string; index: number }
     out.push({ name: m[1], index: m.index ?? 0 });
   }
   return out;
+}
+
+const WRAPPER_NAMES = new Set([
+  'Promise', 'Task', 'ValueTask', 'Future', 'Result', 'Option', 'Optional', 'Nullable',
+  'Observable', 'Stream', 'Either', 'Response', 'ActionResult', 'AsyncIterable',
+  'AsyncIterator', 'Generator', 'AsyncGenerator',
+]);
+
+/** Deconstructs wrapper types (Promises, Tasks, Results, Options, Streams, etc.) to extract payload and error paths. */
+export function unwrapReturnType(typeStr?: string): UnwrappedReturn | undefined {
+  if (!typeStr) return undefined;
+  const clean = typeStr.trim();
+  if (splitTop(clean, '|').length > 1) return undefined;
+  const angleOpen = clean.indexOf('<');
+  if (angleOpen <= 0) return undefined;
+  const angleClose = matchAngle(clean, angleOpen);
+  if (angleClose !== clean.length - 1) return undefined;
+
+  const wrapper = clean.slice(0, angleOpen).trim();
+  if (!WRAPPER_NAMES.has(wrapper)) return undefined;
+
+  const innerText = clean.slice(angleOpen + 1, angleClose).trim();
+  const parts = splitTop(innerText, ',').map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return undefined;
+
+  let payload = parts[0];
+  let error: string | undefined;
+
+  if (wrapper === 'Result' || wrapper === 'Either') {
+    if (parts.length >= 2) {
+      if (wrapper === 'Either') {
+        payload = parts[1];
+        error = parts[0];
+      } else {
+        payload = parts[0];
+        error = parts[1];
+      }
+    }
+  }
+
+  const nested = unwrapReturnType(payload);
+
+  return {
+    wrapper,
+    payload,
+    error,
+    inner: nested,
+  };
+}
+
+/** Classifies whether a callable acts as a Query (read-only/pure calculation) or a Command (state mutation/side-effect). */
+export function classifyCallable(
+  name: string,
+  returnType?: string,
+  modifiers: string[] = []
+): 'query' | 'command' | 'unknown' {
+  if (modifiers.includes('get')) return 'query';
+  if (modifiers.includes('set')) return 'command';
+
+  const cleanReturn = (returnType ?? '').trim();
+  const isVoidReturn =
+    /^(?:void|Promise<void>|Task<void>|ValueTask<void>|Future<void>|None|nil|\(\)|std::monostate)$/i.test(
+      cleanReturn
+    );
+
+  const head = name.replace(/^_+/, '');
+  const verb = (head[0]?.toLowerCase() ?? '') + head.slice(1);
+
+  const commandVerbPattern =
+    /^(?:set|update|delete|remove|insert|add|push|pop|shift|unshift|clear|reset|save|store|write|create|build|make|handle|process|dispatch|send|emit|post|put|apply|mutate|execute|run|start|stop|init|destroy|close|open|toggle|connect|disconnect|publish|subscribe)(?=$|[A-Z_\d])/;
+
+  const queryVerbPattern =
+    /^(?:get|is|has|can|should|find|lookup|search|fetch|query|read|load|count|calculate|compute|to|as|parse|format|extract|validate|check|filter|select|map|list|peek|describe)(?=$|[A-Z_\d])/;
+
+  if (isVoidReturn) return 'command';
+  if (commandVerbPattern.test(verb)) return 'command';
+  if (queryVerbPattern.test(verb)) return 'query';
+  if (cleanReturn && cleanReturn !== 'unknown' && cleanReturn !== 'any') return 'query';
+
+  return 'unknown';
 }

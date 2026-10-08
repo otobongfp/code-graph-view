@@ -38,7 +38,7 @@ export interface DiffInfo {
   /** Symbol id -> repo-relative test files that call it directly (found even when tests are hidden from the graph). */
   testedBy?: Record<string, string[]>;
   /** Symbol id -> how its parameters or return type changed (TypeScript/JavaScript, working-tree diffs only). */
-  signatures?: Record<string, { change: 'breaking' | 'compatible'; before: string; after: string }>;
+  signatures?: Record<string, { change: 'breaking' | 'compatible'; before: string; after: string; breakdown?: string[] }>;
   /** How many removed methods still have something calling them by name. */
   removed?: number;
 }
@@ -60,6 +60,9 @@ export interface SigParam {
   doc?: string;
   /** The type was worked out by the language server rather than written in the source. */
   inferred?: boolean;
+  readonly?: boolean;
+  nullable?: boolean;
+  mutable?: boolean;
 }
 
 /** A type used by a method's inputs or output, with a look at where it is declared. */
@@ -70,6 +73,13 @@ export interface SigType {
   line: number;
   declaration: string;
   truncated: boolean;
+}
+
+export interface UnwrappedReturn {
+  wrapper: string;
+  payload: string;
+  error?: string;
+  inner?: UnwrappedReturn;
 }
 
 /** What goes into a method and what comes out of it. */
@@ -87,6 +97,8 @@ export interface SignatureData {
   params: SigParam[];
   returns?: { type: string; inferred: boolean; doc?: string };
   types: SigType[];
+  classification?: 'query' | 'command' | 'unknown';
+  unwrappedReturn?: UnwrappedReturn;
 }
 
 export interface GraphData {
