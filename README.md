@@ -114,7 +114,7 @@ The graph is built from your language server's **call hierarchy**, so each langu
 
 The git changes view needs `git` on your PATH and a trusted workspace.
 
-**What the review numbers mean.** Callers come from the call hierarchy, so calls through interfaces, callbacks, events, dependency injection or reflection are not seen: treat the counts as a minimum. "No test found" means no test-named file (`*.test.*`, `*.spec.*`, `__tests__`, `_test.go`, `test_*.py`, `*Test.java`, `*Tests.cs`, `*Test.kt`, `*Test.php`, `*_test.cpp`, `*_test.dart`, `*_test.rb`, `*Test.swift`) was found among the calls that reach a method, not that none exists. "Removed, still referenced" is a text search by name, so check each hit.
+**What the review numbers mean.** Callers come from the call hierarchy, so calls through interfaces, callbacks, events, dependency injection or reflection are not seen: treat the counts as a minimum. "No test found" means no test-named file (`*.test.*`, `*.spec.*`, `__tests__/`, `src/test/`, `_test.go`, `test_*.py`, `*_test.py`, `Test*.java`, `*Test.java`, `*IT.java`, `*Tests.cs`, `*Test.kt`, `*Test.php`, `*_test.cpp`, `*_test.dart`, `*_test.rb`, `*_spec.rb`, `*Tests.swift`, `*Spec.scala`, `*_test.zig`, `*_spec.lua`; the `Test`/`Spec` suffixes are case-sensitive, so `Latest.cs` or `Contest.java` are not tests) was found among the calls that reach a method, not that none exists. "Removed, still referenced" is a text search by name, so check each hit.
 
 ## Configuration
 

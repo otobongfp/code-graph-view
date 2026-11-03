@@ -65,7 +65,7 @@ export class ContextBucketManager {
     const item = this.items.find((i) => i.id === id);
     if (item) {
       item.level = level;
-      }
+    }
     return this.resolveSummary();
   }
 

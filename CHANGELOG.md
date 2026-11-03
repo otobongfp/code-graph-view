@@ -2,6 +2,23 @@
 
 All notable changes to Code Graph View are recorded here.
 
+## [0.2.1]
+
+### Fixed
+- **Methods missing from classes**: the outline is now searched more thoroughly, so these show up as methods:
+  - arrow-function class fields (`onClick = () => {}`) and getters/setters; data fields like `count = 0` are still left out
+  - methods of object literals and class expressions held in a variable (`const api = { get() {} }`, `const Foo = class {}`)
+  - named functions declared inside a method (inline callbacks such as `map() callback` stay part of their method)
+- **Missing calls to arrow functions**: callers and callees that the language server reports as variables, fields or properties (`const fmt = () => ...`, `onClick = () => ...`) are no longer dropped from the graph.
+- **Duplicate rows with no relations**: when the outline and the call hierarchy give a method slightly different positions (e.g. the `async` keyword rather than the name), the method is now one row that carries all its calls, instead of an empty row next to a second one with the edges.
+- **Changes view**: changes, signature changes and tested-by information now stay on the same row as the method's callers when those positions differ, and a changed arrow function is no longer reported as "changed value, not a function".
+- **Constants shown as functions**: a variable or constant that isn't a function is no longer added as a row when the language server answers with the file or block around it.
+- **Graphing from inside a callback**: running *Show Graph* with the cursor inside an inline callback now roots the graph at the method around it, not at the anonymous callback.
+- **Ordinary files hidden as tests**: test detection now looks at the file name only and matches `Test`/`Spec` suffixes case-sensitively, so files like `latest_prices.py`, `LatestPrice.java`, `Contest.cs`, `Latest.swift` or anything under a `testing/` folder are no longer hidden by `codeGraphView.hideTests`. Maven/Gradle `src/test/` trees are still treated as tests.
+- **Dependency folders**: the call graph, the changes view and symbol search now share one list of dependency and build folders (`dist`, `out` and `.next` were previously only skipped in the changes view), and the folders are matched inside the workspace only, so a project checked out under a folder named `build` or `target` is no longer hidden.
+- When many roots exceed the per-file limit, functions and methods are kept ahead of variables and fields that may not be functions.
+- Symbol search lists constructors too.
+
 ## [0.2.0]
 
 ### Added

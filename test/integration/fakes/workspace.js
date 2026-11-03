@@ -12,7 +12,7 @@ function symbolsOf(fsPath) {
 }
 const commands = { async executeCommand(cmd, ...a) {
   if (cmd === 'vscode.executeDocumentSymbolProvider') return fs.existsSync(a[0].fsPath) ? symbolsOf(a[0].fsPath) : [];
-  if (cmd === 'vscode.prepareCallHierarchy') { const s = symbolsOf(a[0].fsPath).find((x) => x.range.contains(a[1])); return s ? [{ name: s.name, kind: s.kind, uri: a[0], range: s.range, selectionRange: s.selectionRange, _sessionId: 's' }] : []; }
+  if (cmd === 'vscode.prepareCallHierarchy') { const s = symbolsOf(a[0].fsPath).find((x) => x.range.contains(a[1])); const sel = globalThis.__chAtLineStart && s ? new Range(s.range.start.line, 0, s.range.start.line, 6) : s && s.selectionRange; return s ? [{ name: s.name, kind: s.kind, uri: a[0], range: s.range, selectionRange: sel, _sessionId: 's' }] : []; }   // __chAtLineStart: answer at `export`, not the name
   if (cmd === 'vscode.provideIncomingCalls') {   // callers by text: any other function in the repo root whose body mentions `name(`
     const name = a[0].name; const out = [];
     for (const f of fs.readdirSync(ROOT).filter((x) => x.endsWith('.ts'))) {

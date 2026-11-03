@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { compareCallables } from "./signatureDiff";
 import { parseCallable, parseGenericCallable } from "./tsSignature";
 import { findRemoved } from "./removedCode";
+import { isDependencyPath, isTestFile, looksCallable } from "./pathFilters";
 import { computeDiff, mapLineBack, readAtRef, repoRootFor } from "./git";
 import {
   CODE_FILE,
@@ -24,8 +25,20 @@ const VARIABLE_KINDS = new Set<vscode.SymbolKind>([
   vscode.SymbolKind.Constant,
 ]);
 
-const TEST_FILE =
-  /(\.(spec|test)\.[cm]?[jt]sx?$)|(_test\.go$)|(test_.*\.py$)|(.*_test\.py$)|(Test.*\.java$)|(.*Test\.java$)|(.*Tests?\.cs$)|(.*_test\.(cpp|cc|cxx|c)$)|(.*Test\.php$)|(.*Test\.kt$)|(.*_test\.dart$)|(.*_(test|spec)\.rb$)|(test_.*\.rb$)|(.*Tests?\.swift$)|(.*(Spec|Suite|Test)\.scala$)|(.*_test\.zig$)|(.*_(spec|test)\.lua$)|(\/__tests__\/)/i;
+/** Class members that may hold a function (arrow-function fields, getters); kept only when the declaration looks like one. */
+const MEMBER_KINDS = new Set<vscode.SymbolKind>([
+  vscode.SymbolKind.Property,
+  vscode.SymbolKind.Field,
+]);
+
+/** Children that mark a variable as an object literal or class expression whose members are the methods. */
+const CONTAINER_MEMBERS = new Set<vscode.SymbolKind>([
+  vscode.SymbolKind.Method,
+  vscode.SymbolKind.Property,
+  vscode.SymbolKind.Field,
+  vscode.SymbolKind.Constructor,
+  vscode.SymbolKind.Class,
+]);
 
 const MAX_ROOT_SYMBOLS = 200;
 const MAX_SYMBOLS = 400;
@@ -54,12 +67,15 @@ function baseName(uri: vscode.Uri): string {
   return uri.path.split("/").pop() ?? uri.path;
 }
 
-/** Third-party and generated code: dependencies (node_modules, Go vendor, Python environments) and build output. */
-export const DEPENDENCY_DIRS =
-  /\/(node_modules|vendor|target|\.venv|venv|site-packages|__pycache__|\.gradle|build|bin\/(?:Debug|Release|x86|x64|AnyCPU)|obj|\.dart_tool|\.build|\.swiftpm|\.metals|\.bloop)\//;
+export { isDependencyPath };
+
+/** The path inside the workspace, so folders above it (say a checkout under ~/build) don't count as build output. */
+const relPath = (uri: vscode.Uri) => vscode.workspace.asRelativePath(uri, false);
+
+const isTestUri = (uri: vscode.Uri) => isTestFile(relPath(uri));
 
 export function isWorkspaceFile(uri: vscode.Uri): boolean {
-  if (uri.scheme !== "file" || DEPENDENCY_DIRS.test(uri.path)) {
+  if (uri.scheme !== "file" || isDependencyPath(relPath(uri))) {
     return false;
   }
   const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
@@ -150,7 +166,8 @@ class Registry {
       name,
       kind:
         kind === vscode.SymbolKind.Method ||
-        kind === vscode.SymbolKind.Constructor
+        kind === vscode.SymbolKind.Constructor ||
+        MEMBER_KINDS.has(kind)
           ? "method"
           : "function",
       line: pos.line,
@@ -163,6 +180,17 @@ class Registry {
 
   registerNode(node: NodeRef): string {
     return this.register(node.uri, node.name, node.kind, node.pos);
+  }
+
+  /** Drops the row at `from` and registers `node` in its place (or folds into `node`'s row if it already exists). */
+  replace(from: string, node: NodeRef): string {
+    const row = this.rows.get(from);
+    if (row && from !== node.id) {
+      this.rows.delete(from);
+      const file = this.files.get(node.uri.toString());
+      if (file) file.symbols = file.symbols.filter((r) => r !== row);
+    }
+    return this.registerNode(node);
   }
 
   toFiles(rootFileId: string): FileNode[] {
@@ -189,16 +217,50 @@ export async function getDocumentSymbols(
   return result ?? [];
 }
 
+/** TypeScript lists inline callbacks as functions named like `map() callback`; they belong to the method around them. */
+const isAnonymous = (name: string) =>
+  /\scallback$|^<.*>$|^\(anonymous\)/.test(name);
+
+const namedChildren = (symbol: vscode.DocumentSymbol) =>
+  symbol.children.filter((c) => !isAnonymous(c.name));
+
+interface CollectOptions {
+  /** Also take named functions declared inside a function or method. */
+  nested?: boolean;
+  /** Source text of a symbol, used to tell a function-valued field from a data field. */
+  declaration?: (symbol: vscode.DocumentSymbol) => string;
+}
+
+/**
+ * The symbols to look up as possible methods: functions and methods, variables that may hold a function, and class
+ * fields whose declaration is a function. Classes and namespaces are searched, and so are object literals and class
+ * expressions held in variables (`const api = { get() {} }`).
+ */
 function collectCandidates(
   symbols: vscode.DocumentSymbol[],
   isCallable: (kind: vscode.SymbolKind) => boolean,
+  opts: CollectOptions = {},
   out: vscode.DocumentSymbol[] = [],
 ) {
   for (const symbol of symbols) {
-    if (isCallable(symbol.kind) || VARIABLE_KINDS.has(symbol.kind)) {
+    if (isCallable(symbol.kind)) {
       out.push(symbol);
+      if (opts.nested)
+        collectCandidates(namedChildren(symbol), isCallable, opts, out);
+    } else if (VARIABLE_KINDS.has(symbol.kind)) {
+      if (symbol.children.some((c) => CONTAINER_MEMBERS.has(c.kind))) {
+        collectCandidates(symbol.children, isCallable, opts, out);
+      } else {
+        out.push(symbol);
+        if (opts.nested)
+          collectCandidates(namedChildren(symbol), isCallable, opts, out);
+      }
+    } else if (MEMBER_KINDS.has(symbol.kind)) {
+      if (opts.declaration && looksCallable(opts.declaration(symbol))) {
+        out.push(symbol);
+      }
     } else if (symbol.children.length) {
-      collectCandidates(symbol.children, isCallable, out);
+      collectCandidates(symbol.children, isCallable, opts, out);
     }
   }
   return out;
@@ -212,6 +274,25 @@ export function symbolAt(
   for (const symbol of symbols) {
     if (symbol.range.contains(pos)) {
       return symbolAt(symbol.children, pos) ?? symbol;
+    }
+  }
+  return undefined;
+}
+
+/** The innermost named function or method around `pos`, so a click inside `.map(x => ...)` roots at the method. */
+function callableAt(
+  symbols: vscode.DocumentSymbol[],
+  pos: vscode.Position,
+): vscode.DocumentSymbol | undefined {
+  for (const symbol of symbols) {
+    if (symbol.range.contains(pos)) {
+      const inner = callableAt(symbol.children, pos);
+      if (inner) return inner;
+      const fnLike =
+        isCallableKind(symbol.kind, true) ||
+        VARIABLE_KINDS.has(symbol.kind) ||
+        MEMBER_KINDS.has(symbol.kind);
+      return fnLike && !isAnonymous(symbol.name) ? symbol : undefined;
     }
   }
   return undefined;
@@ -321,6 +402,18 @@ const isCallableKind = (
   kind === vscode.SymbolKind.Method ||
   (includeConstructors && kind === vscode.SymbolKind.Constructor);
 
+/**
+ * Whether a call-hierarchy item stands for a function. Arrow functions come back as variables, fields or properties
+ * (`const f = () => {}`, `onClick = () => {}`), getters as properties; files, modules and classes are not functions.
+ */
+const isCallableItemKind = (
+  kind: vscode.SymbolKind,
+  includeConstructors: boolean,
+) =>
+  isCallableKind(kind, includeConstructors) ||
+  VARIABLE_KINDS.has(kind) ||
+  MEMBER_KINDS.has(kind);
+
 interface RootCandidate {
   uri: vscode.Uri;
   symbol: vscode.DocumentSymbol;
@@ -338,6 +431,8 @@ interface CrawlConfig {
   reportedDepth: number;
   /** Files that are always tracked, whatever the hide-tests setting says. */
   exempt: Set<string>;
+  /** Filled with outline ids that were replaced by their call-hierarchy id, so callers can look rows up by either. */
+  aliases?: Map<string, string>;
   truncated?: boolean;
   diff?: DiffInfo;
   /** Shown unless the crawl finds something more specific to say. */
@@ -359,9 +454,11 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
 
   const isCallable = (kind: vscode.SymbolKind) =>
     isCallableKind(kind, includeConstructors);
+  const isCallableItem = (kind: vscode.SymbolKind) =>
+    isCallableItemKind(kind, includeConstructors);
   const isTrackable = (u: vscode.Uri) =>
     cfg.exempt.has(u.toString()) ||
-    (isWorkspaceFile(u) && !(hideTests && TEST_FILE.test(u.path)));
+    (isWorkspaceFile(u) && !(hideTests && isTestUri(u)));
 
   let callableAttempts = 0;
   let callableResolved = 0;
@@ -392,6 +489,30 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
       }
     }
   }
+
+  // A root is first listed at its outline position, but the call hierarchy may name it by a slightly different one
+  // (the `async` keyword rather than the name, say). Every relation uses the call-hierarchy id, so move the row there.
+  const rekey = (from: string, node: NodeRef): string => {
+    const to = reg.replace(from, node);
+    if (to === from) return to;
+    cfg.aliases?.set(from, to);
+    const i = rootIds.indexOf(from);
+    rootIdSet.delete(from);
+    if (i >= 0) {
+      if (rootIdSet.has(to)) rootIds.splice(i, 1);
+      else {
+        rootIds[i] = to;
+        rootIdSet.add(to);
+      }
+    }
+    for (const map of [cfg.diff?.changes, cfg.diff?.signatures]) {
+      if (map && from in map) {
+        map[to] = map[from];
+        delete map[from];
+      }
+    }
+    return to;
+  };
 
   const addEdge = (source: string, dest: string) => {
     const key = `${source}>${dest}`;
@@ -442,7 +563,7 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
   const testCallers = new Map<string, Set<string>>();
   const noteTests = (callee: string, callers: Handle[]) => {
     for (const c of callers) {
-      if (isCallable(c.node.kind) && TEST_FILE.test(c.node.uri.path)) {
+      if (isCallableItem(c.node.kind) && isTestUri(c.node.uri)) {
         (
           testCallers.get(callee) ??
           testCallers.set(callee, new Set()).get(callee)!
@@ -464,7 +585,7 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
         if (direction === "incoming" && cfg.diff)
           noteTests(h.node.id, results[i]);
         const others = results[i].filter(
-          (o) => isCallable(o.node.kind) && isTrackable(o.node.uri),
+          (o) => isCallableItem(o.node.kind) && isTrackable(o.node.uri),
         );
         if (others.length > MAX_CALLS_PER_SYMBOL) {
           truncated = true;
@@ -507,13 +628,29 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
     await expandFrom(cfg.singleRoot);
   } else {
     await mapLimit(cfg.candidates, ROOT_CONCURRENCY, async (c) => {
-      const handle = await prepareFresh(c.uri, c.symbol.selectionRange.start);
-      if (isCallable(c.symbol.kind)) {
+      const prepared = await prepareFresh(c.uri, c.symbol.selectionRange.start);
+      const sure = isCallable(c.symbol.kind);
+      // For a variable or field that isn't a function, servers answer with whatever encloses it (often the whole
+      // file). Only keep an answer that is a function and is this symbol.
+      const handle =
+        prepared &&
+        (sure ||
+          (isCallableItem(prepared.node.kind) &&
+            prepared.node.uri.toString() === c.uri.toString() &&
+            c.symbol.range.contains(prepared.node.pos)))
+          ? prepared
+          : undefined;
+      if (sure) {
         callableAttempts++;
         if (handle) callableResolved++;
       }
       if (!handle) return;
-      addRoot(reg.registerNode(handle.node));
+      const outlineId = idOf(c.uri, c.symbol.selectionRange.start);
+      addRoot(
+        handle.node.uri.toString() === c.uri.toString()
+          ? rekey(outlineId, handle.node)
+          : reg.registerNode(handle.node),
+      );
       await expandFrom(handle);
     });
   }
@@ -537,14 +674,13 @@ function findExtensionAction(lang: LanguageExtensionInfo): NoticeAction {
   return { label: `Find ${lang.languageName} Extensions`, query: lang.query };
 }
 
-/** Whether the file has anything besides whitespace, since an empty file has no symbols with any server. */
-async function hasContent(uri: vscode.Uri): Promise<boolean> {
+async function openDocument(
+  uri: vscode.Uri,
+): Promise<vscode.TextDocument | undefined> {
   try {
-    return (
-      (await vscode.workspace.openTextDocument(uri)).getText().trim().length > 0
-    );
+    return await vscode.workspace.openTextDocument(uri);
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -575,7 +711,7 @@ export async function buildGraph(
 
   const docSymbols = await getDocumentSymbols(uri);
   if (target.position) {
-    const enclosing = symbolAt(docSymbols, target.position);
+    const enclosing = callableAt(docSymbols, target.position);
     singleRoot = await prepareFresh(
       uri,
       enclosing?.selectionRange.start ?? target.position,
@@ -585,12 +721,20 @@ export async function buildGraph(
     }
   }
   if (!singleRoot) {
-    const symbols = collectCandidates(docSymbols, (k) =>
-      isCallableKind(k, settings.includeConstructors),
-    );
+    const doc = await openDocument(uri);
+    const isCallable = (k: vscode.SymbolKind) =>
+      isCallableKind(k, settings.includeConstructors);
+    let symbols = collectCandidates(docSymbols, isCallable, {
+      nested: true,
+      declaration: (s) => doc?.getText(s.range) ?? "",
+    });
     if (symbols.length > MAX_ROOT_SYMBOLS) {
       truncated = true;
-      symbols.length = MAX_ROOT_SYMBOLS;
+      // Keep the certain methods ahead of variables and fields that may turn out not to be functions.
+      symbols = [
+        ...symbols.filter((s) => isCallable(s.kind)),
+        ...symbols.filter((s) => !isCallable(s.kind)),
+      ].slice(0, MAX_ROOT_SYMBOLS);
     }
     candidates = symbols.map((symbol) => ({ uri, symbol }));
 
@@ -599,7 +743,7 @@ export async function buildGraph(
       docSymbols.length === 0
         ? getLanguageExtensionInfo(uri.fsPath)
         : undefined;
-    if (lang && (await hasContent(uri))) {
+    if (lang && (doc?.getText().trim().length ?? 0) > 0) {
       initialNotice = `No ${lang.languageName} language server answered for this file, so there is nothing to graph. Check that a ${lang.languageName} extension is installed and running.`;
       initialNoticeAction = findExtensionAction(lang);
     }
@@ -664,8 +808,6 @@ function callableNear(
 
 /** Changed files whose symbols are looked up at the same time. */
 const DIFF_FILE_CONCURRENCY = 6;
-const SKIPPED_DIRS =
-  /(^|\/)(node_modules|dist|out|build|\.next|vendor|target|\.venv|venv|site-packages|__pycache__|\.gradle|bin\/(?:Debug|Release|x86|x64|AnyCPU)|obj|\.dart_tool|\.build|\.swiftpm|\.metals|\.bloop)\//;
 
 /** The git repository to read changes from: the one containing the file you're looking at, else the first folder. */
 export async function diffRepoRoot(hintUri?: vscode.Uri): Promise<string> {
@@ -733,9 +875,9 @@ export async function buildDiffGraph(
       };
       if (!CODE_FILE.test(file.path))
         return skip("not a supported source file");
-      if (SKIPPED_DIRS.test(file.path))
+      if (isDependencyPath(file.path))
         return skip("in a dependency or build folder");
-      if (settings.hideTests && TEST_FILE.test(file.path)) {
+      if (settings.hideTests && isTestFile(file.path)) {
         return skip("test file (hidden by codeGraphView.hideTests)");
       }
       if (!file.exact) out.approximate = true;
@@ -746,8 +888,10 @@ export async function buildDiffGraph(
       } catch {
         return out;
       }
-      const symbols = collectCandidates(await getDocumentSymbols(uri), (k) =>
-        isCallableKind(k, settings.includeConstructors),
+      const symbols = collectCandidates(
+        await getDocumentSymbols(uri),
+        (k) => isCallableKind(k, settings.includeConstructors),
+        { declaration: (s) => doc.getText(s.range) },
       );
       // Old and new signatures can be compared when the diff has a left ref, hunks and modified status.
       const comparable =
@@ -885,6 +1029,7 @@ export async function buildDiffGraph(
   };
   summarize();
 
+  const aliases = new Map<string, string>();
   const data = await crawl({
     rootFileId: `diff:${source}`,
     rootFile: root,
@@ -894,6 +1039,7 @@ export async function buildDiffGraph(
     calleeDepth: 1,
     reportedDepth: 3,
     exempt,
+    aliases,
     diff: info,
     onProgress: options.onProgress,
   });
@@ -903,7 +1049,8 @@ export async function buildDiffGraph(
     data.files.flatMap((f) => f.symbols.map((sym) => sym.id)),
   );
   for (const c of candidates) {
-    const id = idOf(c.uri, c.symbol.selectionRange.start);
+    const outlineId = idOf(c.uri, c.symbol.selectionRange.start);
+    const id = aliases.get(outlineId) ?? outlineId;
     if (info.changes[id] && !rowIds.has(id)) {
       delete info.changes[id];
       other.push({

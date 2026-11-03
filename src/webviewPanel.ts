@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { buildDiffGraph, buildGraph, clearGraphCache, DEPENDENCY_DIRS, diffRepoRoot, dropEmptyCalls } from './graphBuilder';
+import { buildDiffGraph, buildGraph, clearGraphCache, diffRepoRoot, dropEmptyCalls, isDependencyPath } from './graphBuilder';
 import { getGitStatusSummary, listRecentCommits } from './git';
 import { getSignature } from './signatureProvider';
 import { ContextBucketManager } from './contextBucket';
@@ -741,13 +741,13 @@ export class CodeGraphPanel {
         const kind =
           symbol.kind === vscode.SymbolKind.Function
             ? 'function'
-            : symbol.kind === vscode.SymbolKind.Method
+            : symbol.kind === vscode.SymbolKind.Method || symbol.kind === vscode.SymbolKind.Constructor
               ? 'method'
               : symbol.kind === vscode.SymbolKind.Class
                 ? 'class'
                 : undefined;
         const uri = symbol.location.uri;
-        if (!kind || uri.scheme !== 'file' || DEPENDENCY_DIRS.test(uri.path)) continue;
+        if (!kind || uri.scheme !== 'file' || isDependencyPath(vscode.workspace.asRelativePath(uri, false))) continue;
         const start = symbol.location.range.start;
         out.push({
           kind,

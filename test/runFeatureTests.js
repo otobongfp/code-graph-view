@@ -11,6 +11,7 @@ async function runFeatureTests() {
     path.join(__dirname, 'diffReview.test.ts'),
     path.join(__dirname, 'analysis.test.ts'),
     path.join(__dirname, 'diagramExport.test.ts'),
+    path.join(__dirname, 'pathFilters.test.ts'),
   ];
 
   const result = await esbuild.build({

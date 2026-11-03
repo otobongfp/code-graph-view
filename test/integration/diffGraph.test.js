@@ -115,4 +115,26 @@ module.exports = [
       assert.deepStrictEqual(r.methods, { 'a.ts:two': 'modified', 'a.ts:four': 'added', 'b.ts:load': 'modified', 'c.ts:brandNew': 'added' });
     },
   ],
+  [
+    'when the call hierarchy names a method by another position, the change, its caller and its signature stay on one row',
+    async () => {
+      const repo = h.gitRepo('diff-alias');
+      repo.write('lib.ts', 'export function load(id: string) {\n  return id;\n}\n');
+      repo.write('use.ts', 'export function run() {\n  return load("y");\n}\n');
+      repo.sh('git add -A && git commit -q -m first');
+      repo.write('lib.ts', 'export function load(id: number) {\n  return id;\n}\n');
+      globalThis.__chAtLineStart = true;
+      try {
+        const r = await changed(repo, 'uncommitted');
+        const rows = r.data.files.flatMap((f) => f.symbols).filter((s) => s.name === 'load');
+        assert.strictEqual(rows.length, 1, 'one row for load()');
+        assert.deepStrictEqual(r.methods, { 'lib.ts:load': 'modified' });
+        assert.ok(r.data.diff.signatures[rows[0].id], 'the signature change is on that row');
+        assert.ok(r.data.edges.some((e) => e.target === rows[0].id), 'and so is the call from run()');
+        assert.ok(!r.other.some((l) => /load/.test(l)), 'not reported as a changed value');
+      } finally {
+        delete globalThis.__chAtLineStart;
+      }
+    },
+  ],
 ];

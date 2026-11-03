@@ -96,7 +96,7 @@ async function resolveType(
 export async function getSignature(uri: vscode.Uri, position: vscode.Position): Promise<SignatureData> {
   const doc = await vscode.workspace.openTextDocument(uri);
   const path = symbolPath(await getDocumentSymbols(uri), position);
-  const symbol = path[path.length - 1] ?? symbolAt([], position);
+  const symbol = path[path.length - 1];
   if (!symbol) {
     throw new Error('No method or function found at this position.');
   }
