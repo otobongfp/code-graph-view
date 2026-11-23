@@ -41,6 +41,22 @@ async function changed(repo, source) {
 
 module.exports = [
   [
+    'a changed nested function inside a function held in a variable is a changed method too',
+    async () => {
+      const repo = h.gitRepo('diff-nested-var');
+      repo.write('lib.ts', 'export function helper(x: number) {\n  return x;\n}\n');
+      repo.write('app.ts', 'export const handler = () => {\n  function inner() {\n    return helper(1);\n  }\n  return inner();\n};\n');
+      repo.sh('git add -A && git commit -q -m first');
+      repo.write('lib.ts', 'export function helper(x: number) {\n  return x + 1;\n}\n');
+      repo.write('app.ts', 'export const handler = () => {\n  function inner() {\n    return helper(2);\n  }\n  return inner();\n};\n');
+      const r = await changed(repo, 'uncommitted');
+      assert.strictEqual(r.methods['app.ts:inner'], 'modified');
+      const helperId = Object.keys(r.data.diff.changes).find((id) => id.includes('lib.ts'));
+      const { reviewDiff } = h.freshRequire(h.bundleNode(path.join(h.root, 'src', 'diffReview.ts')));
+      assert.strictEqual(reviewDiff(r.data).byId.get(helperId).notUpdated, 0, 'inner() changed in this diff');
+    },
+  ],
+  [
     "a Python __init__ is called through its class, so a changed constructor still has its untouched callers",
     async () => {
       const repo = h.gitRepo('diff-py-init');

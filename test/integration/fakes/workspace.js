@@ -7,8 +7,9 @@ const ROOT = globalThis.__root;
 function symbolsOf(fsPath) {
   if (fsPath.endsWith('.py')) return pySymbolsOf(fsPath);
   const lines = fs.readFileSync(fsPath, 'utf8').split('\n'); const out = [];
-  for (let i = 0; i < lines.length; i++) { const m = /^export (?:async )?function (\w+)\(/.exec(lines[i]); if (!m) continue; let j = i; while (j < lines.length && lines[j] !== '}') j++; const col = lines[i].indexOf(m[1]);
-    out.push({ name: m[1], kind: SymbolKind.Function, detail: '', range: new Range(i, 0, j, 1), selectionRange: new Range(i, col, i, col + m[1].length), children: nestedIn(lines, i + 1, j) }); }
+  for (let i = 0; i < lines.length; i++) { const m = /^export (?:async )?function (\w+)\(/.exec(lines[i]) ?? /^export const (\w+) = (?:async )?\(/.exec(lines[i]); if (!m) continue; let j = i; while (j < lines.length && lines[j] !== '}' && lines[j] !== '};') j++; const col = lines[i].indexOf(m[1]);
+    const kind = lines[i].startsWith('export const') ? SymbolKind.Variable : SymbolKind.Function;   // a function held in a variable is outlined as a Variable
+    out.push({ name: m[1], kind, detail: '', range: new Range(i, 0, j, lines[j].length), selectionRange: new Range(i, col, i, col + m[1].length), children: nestedIn(lines, i + 1, j) }); }
   return out;
 }
 // Functions declared inside a function (`  function inner() {` ... `  }`), and with __localsAsSymbols its locals, as a server outlines them.
@@ -52,7 +53,7 @@ const commands = { async executeCommand(cmd, ...a) {
     for (const f of fs.readdirSync(ROOT).filter((x) => x.endsWith('.ts') || x.endsWith('.py'))) {
       const p = pathm.join(ROOT, f); const lines = fs.readFileSync(p, 'utf8').split('\n');
       for (const s of flatten(symbolsOf(p))) {
-        if (s.name === name || s.kind === SymbolKind.Variable) continue;
+        if (s.name === name || (s.kind === SymbolKind.Variable && s.children.length === 0 && s.range.start.line === s.range.end.line)) continue;
         const own = lines.slice(s.range.start.line + 1, s.range.end.line + (p.endsWith('.py') ? 1 : 0)).filter((_, k) => !s.children.some((c) => c.kind !== SymbolKind.Variable && c.range.start.line <= s.range.start.line + 1 + k && s.range.start.line + 1 + k <= c.range.end.line));
         if (new RegExp('\\b' + name + '\\s*\\(').test(own.join('\n'))) out.push({ from: { name: s.name, kind: s.kind, uri: Uri.file(p), range: s.range, selectionRange: s.selectionRange, _sessionId: 's' }, fromRanges: [] });
       }

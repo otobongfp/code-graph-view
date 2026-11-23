@@ -263,6 +263,13 @@ function collectCandidates(
         out.push(symbol);
         if (opts.nested)
           collectCandidates(namedChildren(symbol), isCallable, opts, out);
+        else if (opts.nestedCallables)
+          collectCandidates(
+            namedChildren(symbol).filter((c) => isCallable(c.kind)),
+            isCallable,
+            opts,
+            out,
+          );
       }
     } else if (MEMBER_KINDS.has(symbol.kind)) {
       if (opts.declaration && looksCallable(opts.declaration(symbol))) {
