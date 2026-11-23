@@ -41,6 +41,25 @@ async function changed(repo, source) {
 
 module.exports = [
   [
+    "a Python __init__ is called through its class, so a changed constructor still has its untouched callers",
+    async () => {
+      const repo = h.gitRepo('diff-py-init');
+      repo.write('lib.py', 'class Widget:\n    def __init__(self, size):\n        self.size = size\n\n    def grow(self):\n        return self.size + 1\n');
+      repo.write('use.py', 'def make():\n    return Widget(3)\n');
+      repo.sh('git add -A && git commit -q -m first');
+      repo.write('lib.py', 'class Widget:\n    def __init__(self, size, colour):\n        self.size = size\n\n    def grow(self):\n        return self.size + 1\n');
+      const r = await changed(repo, 'uncommitted');
+      assert.deepStrictEqual(r.methods, { 'lib.py:__init__': 'modified' });
+      const id = Object.keys(r.data.diff.changes)[0];
+      assert.strictEqual(r.data.diff.signatures[id].change, 'breaking');
+      const { reviewDiff } = h.freshRequire(h.bundleNode(path.join(h.root, 'src', 'diffReview.ts')));
+      const review = reviewDiff(r.data).byId.get(id);
+      assert.strictEqual(review.callers, 1, 'make() builds a Widget');
+      assert.strictEqual(review.notUpdated, 1, 'and did not change');
+      assert.strictEqual(review.level, 'high', 'breaking signature with an untouched caller');
+    },
+  ],
+  [
     'a changed nested function is a changed method, so it is not counted as an untouched caller',
     async () => {
       const repo = h.gitRepo('diff-nested');

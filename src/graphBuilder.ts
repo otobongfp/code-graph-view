@@ -451,6 +451,50 @@ interface CrawlConfig {
 }
 
 /**
+ * Python calls a constructor by calling its class (`Widget(3)`), and Pylance reports those calls on the class, not on
+ * `__init__`, which it outlines as a plain method with no callers. For a Python `__init__`, a handle that looks its
+ * callers up through the class but keeps the `__init__` row as the node, so the calls land on the constructor.
+ */
+async function constructorCallsVia(
+  c: RootCandidate,
+  handle: Handle,
+): Promise<Handle | undefined> {
+  if (c.symbol.name !== "__init__" || !/\.pyi?$/i.test(c.uri.fsPath))
+    return undefined;
+  const owner = ownerOf(await getDocumentSymbols(c.uri), c.symbol);
+  if (!owner || owner.kind !== vscode.SymbolKind.Class) return undefined;
+  const cls = await prepareFresh(c.uri, owner.selectionRange.start);
+  if (!cls || cls.node.kind !== vscode.SymbolKind.Class) return undefined;
+  // The position is the class's, so a later fresh lookup finds the class again; the id stays the constructor's.
+  return {
+    node: { ...handle.node, pos: cls.node.pos },
+    item: cls.item,
+    epoch: cls.epoch,
+  };
+}
+
+/** The symbol whose direct children include `target` (matched by position). */
+function ownerOf(
+  symbols: vscode.DocumentSymbol[],
+  target: vscode.DocumentSymbol,
+): vscode.DocumentSymbol | undefined {
+  for (const s of symbols) {
+    if (
+      s.children.some(
+        (ch) =>
+          ch.selectionRange.start.line === target.selectionRange.start.line &&
+          ch.selectionRange.start.character ===
+            target.selectionRange.start.character,
+      )
+    )
+      return s;
+    const inner = ownerOf(s.children, target);
+    if (inner) return inner;
+  }
+  return undefined;
+}
+
+/**
  * Registers the roots, then follows callers up `callerDepth` hops and callees down `calleeDepth` hops from
  * each. Snapshots are handed to `onProgress` while it runs so the graph can appear before it is complete.
  */
@@ -660,7 +704,16 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
           ? rekey(outlineId, handle.node)
           : reg.registerNode(handle.node),
       );
-      await expandFrom(handle);
+      const viaClass = await constructorCallsVia(c, handle);
+      if (viaClass) {
+        await Promise.all([
+          walk(viaClass, "incoming"),
+          walk(handle, "outgoing"),
+        ]);
+        progress();
+      } else {
+        await expandFrom(handle);
+      }
     });
   }
 
