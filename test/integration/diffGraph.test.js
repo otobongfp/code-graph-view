@@ -41,6 +41,46 @@ async function changed(repo, source) {
 
 module.exports = [
   [
+    'a changed nested function is a changed method, so it is not counted as an untouched caller',
+    async () => {
+      const repo = h.gitRepo('diff-nested');
+      repo.write('lib.ts', 'export function helper(x: number) {\n  return x;\n}\n');
+      repo.write('app.ts', 'export function handler() {\n  function inner() {\n    return helper(1);\n  }\n  return inner();\n}\n');
+      repo.sh('git add -A && git commit -q -m first');
+      repo.write('lib.ts', 'export function helper(x: number) {\n  return x + 1;\n}\n');
+      repo.write('app.ts', 'export function handler() {\n  function inner() {\n    const total = helper(2);\n    return total;\n  }\n  return inner();\n}\n');
+      globalThis.__localsAsSymbols = true;
+      try {
+        const r = await changed(repo, 'uncommitted');
+        assert.deepStrictEqual(r.methods, { 'app.ts:handler': 'modified', 'app.ts:inner': 'modified', 'lib.ts:helper': 'modified' });
+        assert.ok(!r.data.diff.other.some((o) => /changed value/.test(o.note)), 'a local inside a changed function is not reported as a changed value');
+        const helperId = Object.keys(r.data.diff.changes).find((id) => id.includes('lib.ts'));
+        const { reviewDiff } = h.freshRequire(h.bundleNode(path.join(h.root, 'src', 'diffReview.ts')));
+        const review = reviewDiff(r.data).byId.get(helperId);
+        assert.strictEqual(review.callers, 1, 'inner() calls it');
+        assert.strictEqual(review.notUpdated, 0, 'and inner() changed in this diff');
+      } finally {
+        delete globalThis.__localsAsSymbols;
+      }
+    },
+  ],
+  [
+    'an unchanged nested function inside a changed function is still an untouched caller',
+    async () => {
+      const repo = h.gitRepo('diff-nested2');
+      repo.write('lib.ts', 'export function helper(x: number) {\n  return x;\n}\n');
+      repo.write('app.ts', 'export function handler() {\n  function inner() {\n    return helper(1);\n  }\n  return inner();\n}\n');
+      repo.sh('git add -A && git commit -q -m first');
+      repo.write('lib.ts', 'export function helper(x: number) {\n  return x + 1;\n}\n');
+      repo.write('app.ts', 'export function handler() {\n  function inner() {\n    return helper(1);\n  }\n  return inner() + 1;\n}\n');
+      const r = await changed(repo, 'uncommitted');
+      assert.deepStrictEqual(r.methods, { 'app.ts:handler': 'modified', 'lib.ts:helper': 'modified' });
+      const helperId = Object.keys(r.data.diff.changes).find((id) => id.includes('lib.ts'));
+      const { reviewDiff } = h.freshRequire(h.bundleNode(path.join(h.root, 'src', 'diffReview.ts')));
+      assert.strictEqual(reviewDiff(r.data).byId.get(helperId).notUpdated, 1, 'inner() calls it and did not change');
+    },
+  ],
+  [
     'a changed signature, its untouched caller and the test that reaches it are all picked up',
     async () => {
       const repo = h.gitRepo('review-sig');

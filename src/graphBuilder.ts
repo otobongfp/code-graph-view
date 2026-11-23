@@ -227,6 +227,8 @@ const namedChildren = (symbol: vscode.DocumentSymbol) =>
 interface CollectOptions {
   /** Also take named functions declared inside a function or method. */
   nested?: boolean;
+  /** Like `nested`, but only nested functions and methods, not the locals and parameters a server may outline. */
+  nestedCallables?: boolean;
   /** Source text of a symbol, used to tell a function-valued field from a data field. */
   declaration?: (symbol: vscode.DocumentSymbol) => string;
 }
@@ -247,6 +249,13 @@ function collectCandidates(
       out.push(symbol);
       if (opts.nested)
         collectCandidates(namedChildren(symbol), isCallable, opts, out);
+      else if (opts.nestedCallables)
+        collectCandidates(
+          namedChildren(symbol).filter((c) => isCallable(c.kind)),
+          isCallable,
+          opts,
+          out,
+        );
     } else if (VARIABLE_KINDS.has(symbol.kind)) {
       if (symbol.children.some((c) => CONTAINER_MEMBERS.has(c.kind))) {
         collectCandidates(symbol.children, isCallable, opts, out);
@@ -891,7 +900,8 @@ export async function buildDiffGraph(
       const symbols = collectCandidates(
         await getDocumentSymbols(uri),
         (k) => isCallableKind(k, settings.includeConstructors),
-        { declaration: (s) => doc.getText(s.range) },
+        // A nested function is a caller in its own right, so a change to it must be a change of its own.
+        { nestedCallables: true, declaration: (s) => doc.getText(s.range) },
       );
       // Old and new signatures can be compared when the diff has a left ref, hunks and modified status.
       const comparable =
