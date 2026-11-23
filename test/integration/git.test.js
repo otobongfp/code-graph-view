@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const h = require('./helpers');
 
-const { computeDiff, mapLine } = h.freshRequire(h.bundleNode(path.join(h.root, 'src', 'git.ts')));
+const { computeDiff, mapLine, repoRootFor } = h.freshRequire(h.bundleNode(path.join(h.root, 'src', 'git.ts')));
 
 const A1 = ['export function one() {', '  return 1;', '}', '', 'export function two() {', '  return 2;', '}', '', 'export function three() {', '  return 3;', '}', ''].join('\n');
 const A2 = A1.replace('  return 2;', '  return 22;') + 'export function four() {\n  return 4;\n}\n';
@@ -29,6 +29,21 @@ function scenario() {
 }
 
 module.exports = [
+  [
+    'the repository root keeps the path as it was opened, through a symlink too',
+    async () => {
+      const repo = h.gitRepo('git-root');
+      fs.mkdirSync(path.join(repo.dir, 'src'));
+      repo.write('src/a.ts', A1);
+      const link = h.tempDir('git-root-link');
+      fs.rmdirSync(link);
+      fs.symlinkSync(repo.dir, link);
+      assert.strictEqual(await repoRootFor(repo.dir), repo.dir, 'as opened (on macOS the temp folder is itself a symlink)');
+      assert.strictEqual(await repoRootFor(link), link, 'through a symlink to the repository');
+      assert.strictEqual(await repoRootFor(path.join(link, 'src')), link, 'from a folder inside it');
+      assert.strictEqual(await repoRootFor(path.join(link, 'src', 'a.ts')), link, 'from a file inside it');
+    },
+  ],
   [
     'each source says which two versions it compares, so a change can be opened as a before/after view',
     async () => {
