@@ -227,6 +227,8 @@ const namedChildren = (symbol: vscode.DocumentSymbol) =>
 interface CollectOptions {
   /** Also take named functions declared inside a function or method. */
   nested?: boolean;
+  /** Like `nested`, but only nested functions and methods, not the locals and parameters a server may outline. */
+  nestedCallables?: boolean;
   /** Source text of a symbol, used to tell a function-valued field from a data field. */
   declaration?: (symbol: vscode.DocumentSymbol) => string;
 }
@@ -247,6 +249,13 @@ function collectCandidates(
       out.push(symbol);
       if (opts.nested)
         collectCandidates(namedChildren(symbol), isCallable, opts, out);
+      else if (opts.nestedCallables)
+        collectCandidates(
+          namedChildren(symbol).filter((c) => isCallable(c.kind)),
+          isCallable,
+          opts,
+          out,
+        );
     } else if (VARIABLE_KINDS.has(symbol.kind)) {
       if (symbol.children.some((c) => CONTAINER_MEMBERS.has(c.kind))) {
         collectCandidates(symbol.children, isCallable, opts, out);
@@ -254,6 +263,13 @@ function collectCandidates(
         out.push(symbol);
         if (opts.nested)
           collectCandidates(namedChildren(symbol), isCallable, opts, out);
+        else if (opts.nestedCallables)
+          collectCandidates(
+            namedChildren(symbol).filter((c) => isCallable(c.kind)),
+            isCallable,
+            opts,
+            out,
+          );
       }
     } else if (MEMBER_KINDS.has(symbol.kind)) {
       if (opts.declaration && looksCallable(opts.declaration(symbol))) {
@@ -439,6 +455,50 @@ interface CrawlConfig {
   initialNotice?: string;
   initialNoticeAction?: NoticeAction;
   onProgress?: (snapshot: GraphData) => void;
+}
+
+/**
+ * Python calls a constructor by calling its class (`Widget(3)`), and Pylance reports those calls on the class, not on
+ * `__init__`, which it outlines as a plain method with no callers. For a Python `__init__`, a handle that looks its
+ * callers up through the class but keeps the `__init__` row as the node, so the calls land on the constructor.
+ */
+async function constructorCallsVia(
+  c: RootCandidate,
+  handle: Handle,
+): Promise<Handle | undefined> {
+  if (c.symbol.name !== "__init__" || !/\.pyi?$/i.test(c.uri.fsPath))
+    return undefined;
+  const owner = ownerOf(await getDocumentSymbols(c.uri), c.symbol);
+  if (!owner || owner.kind !== vscode.SymbolKind.Class) return undefined;
+  const cls = await prepareFresh(c.uri, owner.selectionRange.start);
+  if (!cls || cls.node.kind !== vscode.SymbolKind.Class) return undefined;
+  // The position is the class's, so a later fresh lookup finds the class again; the id stays the constructor's.
+  return {
+    node: { ...handle.node, pos: cls.node.pos },
+    item: cls.item,
+    epoch: cls.epoch,
+  };
+}
+
+/** The symbol whose direct children include `target` (matched by position). */
+function ownerOf(
+  symbols: vscode.DocumentSymbol[],
+  target: vscode.DocumentSymbol,
+): vscode.DocumentSymbol | undefined {
+  for (const s of symbols) {
+    if (
+      s.children.some(
+        (ch) =>
+          ch.selectionRange.start.line === target.selectionRange.start.line &&
+          ch.selectionRange.start.character ===
+            target.selectionRange.start.character,
+      )
+    )
+      return s;
+    const inner = ownerOf(s.children, target);
+    if (inner) return inner;
+  }
+  return undefined;
 }
 
 /**
@@ -651,7 +711,16 @@ async function crawl(cfg: CrawlConfig): Promise<GraphData> {
           ? rekey(outlineId, handle.node)
           : reg.registerNode(handle.node),
       );
-      await expandFrom(handle);
+      const viaClass = await constructorCallsVia(c, handle);
+      if (viaClass) {
+        await Promise.all([
+          walk(viaClass, "incoming"),
+          walk(handle, "outgoing"),
+        ]);
+        progress();
+      } else {
+        await expandFrom(handle);
+      }
     });
   }
 
@@ -891,7 +960,8 @@ export async function buildDiffGraph(
       const symbols = collectCandidates(
         await getDocumentSymbols(uri),
         (k) => isCallableKind(k, settings.includeConstructors),
-        { declaration: (s) => doc.getText(s.range) },
+        // A nested function is a caller in its own right, so a change to it must be a change of its own.
+        { nestedCallables: true, declaration: (s) => doc.getText(s.range) },
       );
       // Old and new signatures can be compared when the diff has a left ref, hunks and modified status.
       const comparable =

@@ -75,7 +75,23 @@ export async function repoRootFor(dir: string): Promise<string> {
       folder = path.dirname(dir);
     }
   } catch {}
-  return (await git(folder, ['rev-parse', '--show-toplevel'])).trim();
+  const top = (await git(folder, ['rev-parse', '--show-toplevel'])).trim();
+  return spelledAs(folder, top);
+}
+
+/**
+ * git resolves symlinks in the top level it reports, but VS Code and the language server name files by the path the
+ * folder was opened with. Climb from `folder` as given instead, so one file never gets two ids (on macOS the temp
+ * folder /var is itself a symlink to /private/var).
+ */
+function spelledAs(folder: string, top: string): string {
+  try {
+    const up = path.relative(fs.realpathSync(folder), fs.realpathSync(top));
+    if (up.split(path.sep).every((part) => part === '..' || part === '')) {
+      return path.resolve(folder, up);
+    }
+  } catch {}
+  return top;
 }
 
 export async function listRecentCommits(root: string, count = 40): Promise<CommitInfo[]> {
